@@ -1,5 +1,5 @@
-// Facture Achat Page - partial BL invoicing with editable quantities
-import { getAll, add, update, remove, getSettings, getNextNumber, getFacturedQtyMap, deleteFactureWithReglements } from '../data/store.js';
+// Facture Achat Page - unique product per invoice, no duplicates across invoices
+import { getAll, add, update, remove, getSettings, getNextNumber, deleteFactureWithReglements } from '../data/store.js';
 import { showToast, showModal, hideModal, confirmDialog, formatCurrency, formatDate, todayISO, numberToWords, printDocumentHeader } from '../utils/helpers.js';
 import { paginate, filterBarHTML, applyFilters, wireFilters } from '../utils/pagination.js';
 
@@ -13,18 +13,30 @@ export async function renderFactureAchat() {
 
   let currentPage = 1, currentFilters = {};
 
+  // Build set of already-invoiced product IDs (across ALL factures)
+  function getInvoicedProductIds() {
+    const ids = new Set();
+    factures.forEach(f => {
+      (f.lignes || []).forEach(l => {
+        const pid = l.produitId || l.fromId;
+        if (pid) ids.add(pid);
+      });
+    });
+    return ids;
+  }
+
   function render(filters = currentFilters, page = currentPage) {
     currentFilters = filters; currentPage = page;
     const filtered = applyFilters(factures, { ...filters, statusField: 'regle', searchFields: ['numero', 'fournisseurNom'] });
     const paged = paginate(filtered, page, 'pagination-controls', p => render(filters, p));
 
     content.innerHTML = `
-      <div class="page-header"><div><h1 class="page-title">🧾 Facture Achat</h1><p class="page-subtitle">Factures fournisseurs (multi-BL, quantités modifiables)</p></div>
+      <div class="page-header"><div><h1 class="page-title">🧾 Facture Achat</h1><p class="page-subtitle">Factures fournisseurs — chaque poteau ne peut être facturé qu'une seule fois</p></div>
         <button class="btn btn-primary" id="add-fa-btn">+ Nouvelle Facture</button></div>
       ${filterBarHTML({ showStatus: true, statusOptions: ['Oui', 'Non'] })}
-      ${paged.length ? `<div class="table-wrapper"><table class="data-table"><thead><tr><th>N°</th><th>Date</th><th>Fournisseur</th><th>BL Réf.</th><th>Total HT</th><th>TVA</th><th>Total TTC</th><th>Réglé</th><th>Actions</th></tr></thead><tbody>
+      ${paged.length ? `<div class="table-wrapper"><table class="data-table"><thead><tr><th>N°</th><th>Date</th><th>Fournisseur</th><th>BL Réf.</th><th>Nb Poteaux</th><th>Total HT</th><th>Total TTC</th><th>Réglé</th><th>Actions</th></tr></thead><tbody>
         ${paged.map(f => `<tr><td><strong style="color:var(--accent)">${f.numero || ''}</strong></td><td>${formatDate(f.date)}</td><td>${f.fournisseurNom || '-'}</td>
-          <td>${(f.blRefs || []).join(', ') || '-'}</td><td>${formatCurrency(f.totalHT)}</td><td>${formatCurrency(f.totalTVA)}</td><td><strong>${formatCurrency(f.totalTTC)}</strong></td>
+          <td>${(f.blRefs || []).join(', ') || '-'}</td><td>${(f.lignes || []).length}</td><td>${formatCurrency(f.totalHT)}</td><td><strong>${formatCurrency(f.totalTTC)}</strong></td>
           <td><span class="badge ${f.regle ? 'badge-success' : 'badge-warning'}">${f.regle ? 'Oui' : 'Non'}</span></td>
           <td class="actions"><button class="btn btn-sm btn-secondary view-fa" data-id="${f.id}">👁️</button><button class="btn btn-sm btn-danger delete-fa" data-id="${f.id}">🗑️</button></td></tr>`).join('')}
       </tbody></table></div>` : `<div class="empty-state"><div class="icon">🧾</div><div class="title">Aucune facture achat</div></div>`}
@@ -37,9 +49,8 @@ export async function renderFactureAchat() {
     document.querySelectorAll('.delete-fa').forEach(b => b.onclick = async () => { if (await confirmDialog('Supprimer la facture et ses règlements ?')) { const n = await deleteFactureWithReglements('factures_achat', b.dataset.id); factures = factures.filter(x => x.id !== b.dataset.id); render(); showToast(`Supprimée (${n} règlement(s) supprimé(s))`); } });
   }
 
-  async function openForm() {
-    // Get already-factured quantities per BL
-    const facturedMap = await getFacturedQtyMap('factures_achat');
+  function openForm() {
+    const invoicedIds = getInvoicedProductIds();
     const availBls = bls.filter(b => b.statut === 'Réceptionné');
     const taxRate = settings.taxRate || 19;
 
@@ -50,66 +61,58 @@ export async function renderFactureAchat() {
       <div class="form-group"><label class="form-label">Sélectionner les BL à facturer</label>
         <div class="checkbox-list" id="bl-checkboxes">${availBls.map(b => `<label class="checkbox-item"><input type="checkbox" value="${b.id}" data-four="${b.fournisseurId}" class="bl-check"/>${b.numero} - ${b.fournisseurNom} (${formatDate(b.date)})</label>`).join('')}
           ${!availBls.length ? '<p style="color:var(--text-muted);padding:8px">Aucun BL disponible</p>' : ''}</div></div>
-      <h4 style="margin:16px 0 8px">Lignes (quantités modifiables)</h4>
-      <div class="table-wrapper"><table class="data-table line-items-table"><thead><tr><th>Désignation</th><th>Qté BL</th><th>Déjà facturé</th><th>Qté à facturer</th><th>Prix HT</th><th>Montant</th></tr></thead><tbody id="fa-lines"><tr><td colspan="6" style="text-align:center;color:var(--text-muted)">Sélectionnez des BL ci-dessus</td></tr></tbody></table></div>
+      <h4 style="margin:16px 0 8px">Poteaux à facturer <small style="color:var(--text-muted)">(déjà facturés exclus)</small></h4>
+      <div class="table-wrapper"><table class="data-table line-items-table"><thead><tr><th style="width:30px">✓</th><th>Poteau</th><th>BL</th><th>Prix HT</th></tr></thead><tbody id="fa-lines"><tr><td colspan="4" style="text-align:center;color:var(--text-muted)">Sélectionnez des BL ci-dessus</td></tr></tbody></table></div>
       <div class="form-group" style="margin-top:12px"><label class="form-label">Note</label><textarea class="form-input" name="note" rows="2" placeholder="Note ou observation..."></textarea></div>
       <div class="doc-totals"><div class="doc-total-row"><span>Total HT:</span><span id="total-ht">0,000 DT</span></div><div class="doc-total-row"><span>TVA:</span><span id="total-tva">0,000 DT</span></div><div class="doc-total-row grand-total"><span>Total TTC:</span><span id="total-ttc">0,000 DT</span></div></div>
     </form>`, `<button class="btn btn-secondary" onclick="document.getElementById('modal-overlay').classList.add('hidden')">Annuler</button><button class="btn btn-primary" id="save-fa">Créer</button>`);
-    document.querySelector('.modal-container').style.maxWidth = '950px';
+    document.querySelector('.modal-container').style.maxWidth = '900px';
 
-    // Filter BL checkboxes by fournisseur
     document.getElementById('fa-four').onchange = () => {
       const fid = document.getElementById('fa-four').value;
       document.querySelectorAll('.bl-check').forEach(cb => { cb.closest('.checkbox-item').style.display = (!fid || cb.dataset.four === fid) ? '' : 'none'; cb.checked = false; });
       rebuildLines();
     };
-
     document.querySelectorAll('.bl-check').forEach(cb => cb.onchange = () => rebuildLines());
     document.getElementById('fa-tax').oninput = () => recalcTotals();
 
     function rebuildLines() {
       const checked = [...document.querySelectorAll('.bl-check:checked')];
       const tbody = document.getElementById('fa-lines');
-      if (!checked.length) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">Sélectionnez des BL</td></tr>'; recalcTotals(); return; }
+      if (!checked.length) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted)">Sélectionnez des BL</td></tr>'; recalcTotals(); return; }
       let html = '';
       checked.forEach(cb => {
         const bl = bls.find(b => b.id === cb.value); if (!bl) return;
-        const blFactured = facturedMap[bl.id] || {};
         (bl.lignes || []).forEach((l, idx) => {
-          const p = produits.find(x => x.id === l.produitId);
+          const pid = l.produitId || l.fromId;
+          if (!pid) return;
+          // Skip already invoiced products
+          if (invoicedIds.has(pid)) return;
+          const p = produits.find(x => x.id === pid);
           const prix = l.prixUnitaire || (p?.prixAchat || 0);
-          const qtyBl = l.quantite || 0;
-          const alreadyFactured = blFactured[idx] || 0;
-          const remaining = Math.max(0, qtyBl - alreadyFactured);
-          if (remaining <= 0) return; // Skip fully factured lines
-          html += `<tr data-bl="${bl.id}" data-line="${idx}" data-max="${remaining}">
-                      <td>${l.designation || ''} <small style="color:var(--text-muted)">(${bl.numero})</small></td>
-                      <td style="text-align:center">${qtyBl}</td>
-                      <td style="text-align:center;color:var(--warning)">${alreadyFactured > 0 ? alreadyFactured : '-'}</td>
-                      <td><input class="form-input line-qty" type="number" min="0" max="${remaining}" value="${remaining}" style="width:80px"/></td>
-                      <td><input class="form-input line-prix" type="number" step="0.001" value="${prix}" style="width:100px"/></td>
-                      <td class="line-montant">${formatCurrency(remaining * prix)}</td></tr>`;
+          html += `<tr data-bl="${bl.id}" data-line="${idx}" data-prod="${pid}">
+            <td><input type="checkbox" class="line-check" checked/></td>
+            <td><strong style="color:var(--accent)">${l.designation || p?.reference || pid}</strong></td>
+            <td><small style="color:var(--text-muted)">${bl.numero}</small></td>
+            <td><input class="form-input line-prix" type="number" step="0.001" value="${prix}" style="width:100px"/></td></tr>`;
         });
       });
-      if (!html) html = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">Toutes les lignes sont déjà facturées</td></tr>';
+      if (!html) html = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted)">Tous les poteaux sont déjà facturés</td></tr>';
       tbody.innerHTML = html;
-      document.querySelectorAll('#fa-lines .line-qty, #fa-lines .line-prix').forEach(i => i.oninput = () => recalcTotals());
+      document.querySelectorAll('#fa-lines .line-check, #fa-lines .line-prix').forEach(i => i.oninput ? i.oninput = () => recalcTotals() : i.onchange = () => recalcTotals());
       recalcTotals();
     }
 
     function recalcTotals() {
       let ht = 0;
       document.querySelectorAll('#fa-lines tr[data-bl]').forEach(r => {
-        const q = parseFloat(r.querySelector('.line-qty')?.value) || 0;
-        const p = parseFloat(r.querySelector('.line-prix')?.value) || 0;
-        ht += q * p;
-        const m = r.querySelector('.line-montant'); if (m) m.textContent = formatCurrency(q * p);
+        const checked = r.querySelector('.line-check')?.checked;
+        if (checked) { ht += parseFloat(r.querySelector('.line-prix')?.value) || 0; }
       });
       const tax = parseFloat(document.getElementById('fa-tax')?.value) || 0;
-      const htEl = document.getElementById('total-ht'), tvaEl = document.getElementById('total-tva'), ttcEl = document.getElementById('total-ttc');
-      if (htEl) htEl.textContent = formatCurrency(ht);
-      if (tvaEl) tvaEl.textContent = formatCurrency(ht * tax / 100);
-      if (ttcEl) ttcEl.textContent = formatCurrency(ht + ht * tax / 100);
+      document.getElementById('total-ht').textContent = formatCurrency(ht);
+      document.getElementById('total-tva').textContent = formatCurrency(ht * tax / 100);
+      document.getElementById('total-ttc').textContent = formatCurrency(ht + ht * tax / 100);
     }
 
     document.getElementById('save-fa').onclick = async () => {
@@ -119,22 +122,20 @@ export async function renderFactureAchat() {
       const dt = document.querySelector('[name="date"]').value;
       const tax = parseFloat(document.getElementById('fa-tax').value) || 0;
 
-      // Collect lines and allocations
-      const allLines = [], blAllocations = [], blRefsSet = new Set();
+      const allLines = [], blRefsSet = new Set(), selectedIds = new Set();
       document.querySelectorAll('#fa-lines tr[data-bl]').forEach(r => {
-        const qty = parseFloat(r.querySelector('.line-qty')?.value) || 0;
+        if (!r.querySelector('.line-check')?.checked) return;
+        const blId = r.dataset.bl, lineIdx = parseInt(r.dataset.line), prodId = r.dataset.prod;
         const prix = parseFloat(r.querySelector('.line-prix')?.value) || 0;
-        if (qty <= 0) return;
-        const blId = r.dataset.bl, lineIdx = parseInt(r.dataset.line);
-        const maxQty = parseFloat(r.dataset.max) || 0;
-        if (qty > maxQty) { showToast(`Quantité dépasse le restant (${maxQty})`, 'error'); return; }
+        // Check no duplicate in current invoice
+        if (selectedIds.has(prodId)) { showToast('Poteau en double dans la facture!', 'error'); return; }
+        selectedIds.add(prodId);
         const bl = bls.find(b => b.id === blId);
         const line = bl?.lignes?.[lineIdx] || {};
         blRefsSet.add(bl?.numero || blId);
-        allLines.push({ ...line, quantite: qty, prixUnitaire: prix, montant: qty * prix, blId, blLineIdx: lineIdx });
-        blAllocations.push({ blId, lineIdx, qty });
+        allLines.push({ ...line, produitId: prodId, quantite: 1, prixUnitaire: prix, montant: prix, blId, blLineIdx: lineIdx });
       });
-      if (!allLines.length) { showToast('Aucune ligne à facturer', 'error'); return; }
+      if (!allLines.length) { showToast('Aucun poteau sélectionné', 'error'); return; }
 
       const blRefs = [...blRefsSet];
       const totalHT = allLines.reduce((s, l) => s + l.montant, 0);
@@ -142,8 +143,9 @@ export async function renderFactureAchat() {
       const n = await getNextNumber('factureAchatPrefix');
       try {
         const note = document.querySelector('[name="note"]').value;
-        const id = await add('factures_achat', { numero: n, date: dt, fournisseurId: fid, fournisseurNom: four?.raisonSociale || '', blRefs, blIds: [...new Set(allLines.map(l => l.blId))], blAllocations, lignes: allLines, taxRate: tax, totalHT, totalTVA, totalTTC: totalHT + totalTVA, regle: false, note });
-        factures.unshift({ id, numero: n, date: dt, fournisseurId: fid, fournisseurNom: four?.raisonSociale || '', blRefs, blAllocations, lignes: allLines, taxRate: tax, totalHT, totalTVA, totalTTC: totalHT + totalTVA, regle: false, note });
+        const data = { numero: n, date: dt, fournisseurId: fid, fournisseurNom: four?.raisonSociale || '', blRefs, lignes: allLines, taxRate: tax, totalHT, totalTVA, totalTTC: totalHT + totalTVA, regle: false, note };
+        const id = await add('factures_achat', data);
+        factures.unshift({ id, ...data });
         hideModal(); render(); showToast(`Facture ${n} créée`);
       } catch (err) { showToast('Erreur: ' + err.message, 'error'); }
     };
@@ -152,8 +154,8 @@ export async function renderFactureAchat() {
   function viewFacture(f) {
     showModal(`Facture Achat - ${f.numero}`, `${printDocumentHeader(settings, 'FACTURE ACHAT', f.numero, f.date)}
       <div class="doc-info"><div class="doc-info-box"><p><strong>Fournisseur:</strong> ${f.fournisseurNom}</p></div><div class="doc-info-box"><p><strong>BL:</strong> ${(f.blRefs || []).join(', ')}</p></div></div>
-      <table class="data-table"><thead><tr><th>Désignation</th><th>Qté</th><th>Prix HT</th><th>Montant</th></tr></thead><tbody>${(f.lignes || []).map(l => `<tr><td>${l.designation}</td><td>${l.quantite}</td><td>${formatCurrency(l.prixUnitaire)}</td><td>${formatCurrency(l.montant)}</td></tr>`).join('')}</tbody></table>
-      <div class="doc-totals"><div class="doc-total-row"><span>Total HT:</span><span>${formatCurrency(f.totalHT)}</span></div><div class="doc-total-row"><span>TVA (${f.taxRate}%):</span><span>${formatCurrency(f.totalTVA)}</span></div><div class="doc-total-row grand-total"><span>Total TTC:</span><span>${formatCurrency(f.totalTTC)}</span></div></div>
+      <table class="data-table"><thead><tr><th>Poteau</th><th>Prix HT</th></tr></thead><tbody>${(f.lignes || []).map(l => `<tr><td>${l.designation || l.produitRef || ''}</td><td>${formatCurrency(l.prixUnitaire)}</td></tr>`).join('')}</tbody></table>
+      <div class="doc-totals"><div class="doc-total-row"><span>Total HT (${(f.lignes || []).length} poteaux):</span><span>${formatCurrency(f.totalHT)}</span></div><div class="doc-total-row"><span>TVA (${f.taxRate}%):</span><span>${formatCurrency(f.totalTVA)}</span></div><div class="doc-total-row grand-total"><span>Total TTC:</span><span>${formatCurrency(f.totalTTC)}</span></div></div>
       <p style="margin-top:12px;font-size:0.85rem;font-style:italic;color:var(--text-secondary)">Arrêté à: <strong>${numberToWords(f.totalTTC)}</strong></p>`,
       `<button class="btn btn-secondary" onclick="document.getElementById('modal-overlay').classList.add('hidden')">Fermer</button><button class="btn btn-primary" onclick="window.print()">🖨️</button>`);
   }
