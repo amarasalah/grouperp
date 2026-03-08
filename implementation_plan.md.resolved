@@ -1,0 +1,179 @@
+# Système de Facturation - GroupERP
+
+A complete French-language invoicing system for a Groupement that buys and sells concrete electricity poles (poteaux béton électrique). Built as a single-page web application with Vite + vanilla JS, using localStorage for persistence.
+
+## Core Requirements
+
+1. **Product Catalogue**: Multiple categories of concrete poles, each with admin-assigned sequential IDs
+2. **Achats (Purchases)**: Devis → Bon de Commande → Bon de Livraison → Facture
+3. **Ventes (Sales)**: Devis → Bon de Commande → Bon de Livraison → Facture
+4. **Taxes**: Admin-configurable tax percentage on Devis and Factures
+5. **Multi-BL Factures**: A single Facture can reference multiple Bons de Livraison
+6. **Stock**: Automatic stock in/out based on purchase/sale deliveries
+7. **Caisse & Règlements**: Cash management and payment tracking
+
+---
+
+## Proposed Changes
+
+### 1. Project Setup (`/`)
+
+#### [NEW] [package.json](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/package.json)
+Vite project with vanilla JS. No heavy framework — just modular ES modules for simplicity and speed.
+
+#### [NEW] [index.html](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/index.html)
+Entry point with app shell, meta tags, and Google Fonts (Inter).
+
+#### [NEW] [vite.config.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/vite.config.js)
+Vite configuration.
+
+---
+
+### 2. Design System (`/src/styles/`)
+
+#### [NEW] [main.css](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/styles/main.css)
+- CSS variables for colors, spacing, typography
+- Dark modern theme with accent colors (Electric blue + industrial gray)
+- Glassmorphism cards, smooth transitions
+- Responsive sidebar + content layout
+- Form styles, table styles, modal styles
+- Print-specific styles for PDF generation
+
+---
+
+### 3. Data Layer (`/src/data/`)
+
+#### [NEW] [store.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/data/store.js)
+LocalStorage-based persistence layer with reactive state management.
+
+**Data Models:**
+- `categories` — Pole categories (ID, nom, description)
+- `produits` — Poles (ID séquentiel, catégorie, désignation, prix_achat, prix_vente, unité)
+- `fournisseurs` — Suppliers (ID, raison_sociale, adresse, téléphone, email, RC, NIF, AI, NIS)
+- `clients` — Customers (same fields as fournisseurs)
+- `settings` — Admin settings (taxes, company info, numbering sequences)
+- `devis_achat`, `bc_achat`, `bl_achat`, `facture_achat` — Purchase documents
+- `devis_vente`, `bc_vente`, `bl_vente`, `facture_vente` — Sales documents
+- `stock_mouvements` — Stock movements
+- `reglements` — Payments
+
+---
+
+### 4. Core Application (`/src/`)
+
+#### [NEW] [app.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/app.js)
+Main application entry: router, sidebar navigation, page rendering.
+
+#### [NEW] [router.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/router.js)
+Hash-based SPA router mapping routes to page modules.
+
+---
+
+### 5. Pages (`/src/pages/`)
+
+#### [NEW] [dashboard.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/pages/dashboard.js)
+Main dashboard with KPIs: total stock, CA ventes, achats du mois, solde caisse, recent activity.
+
+#### [NEW] [parametres.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/pages/parametres.js)
+Admin settings: company info, tax rates (TVA %), document numbering prefixes/sequences.
+
+#### [NEW] [categories.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/pages/categories.js)
+CRUD for pole categories.
+
+#### [NEW] [produits.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/pages/produits.js)
+Product management with sequential ID assignment per category, search & filter.
+
+#### [NEW] [fournisseurs.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/pages/fournisseurs.js)
+Supplier management (CRUD).
+
+#### [NEW] [clients.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/pages/clients.js)
+Customer management (CRUD).
+
+#### [NEW] [devis-achat.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/pages/devis-achat.js)
+Purchase quotes: create with line items, apply admin-configurable tax %, generate PDF.
+
+#### [NEW] [bc-achat.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/pages/bc-achat.js)
+Purchase orders: create from Devis or standalone, confirm, print.
+
+#### [NEW] [bl-achat.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/pages/bl-achat.js)
+Purchase delivery notes: record received quantities, auto-update stock.
+
+#### [NEW] [facture-achat.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/pages/facture-achat.js)
+Purchase invoices: link to one or multiple BL, tax calculation, payment tracking.
+
+#### [NEW] [devis-vente.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/pages/devis-vente.js)
+Sales quotes with tax %, convert to BC.
+
+#### [NEW] [bc-vente.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/pages/bc-vente.js)
+Sales orders from Devis or standalone.
+
+#### [NEW] [bl-vente.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/pages/bl-vente.js)
+Sales delivery notes, auto-decrement stock.
+
+#### [NEW] [facture-vente.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/pages/facture-vente.js)
+Sales invoices from multiple BL, tax, payment tracking.
+
+#### [NEW] [stock.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/pages/stock.js)
+Stock overview: current quantities per product, movement journal, alerts for low stock.
+
+#### [NEW] [caisse.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/pages/caisse.js)
+Cash register: balance, income/expense journal, settlement tracking.
+
+#### [NEW] [reglements.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/pages/reglements.js)
+Payments: record payments against invoices, track remaining balance per invoice.
+
+---
+
+### 6. Utilities (`/src/utils/`)
+
+#### [NEW] [pdf.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/utils/pdf.js)
+PDF generation for documents using browser print / window.print() with CSS @media print.
+
+#### [NEW] [helpers.js](file:///c:/Users/DELL/Desktop/APPLICATIONS/GroupERP/src/utils/helpers.js)
+Date formatting, currency formatting (DZD), number-to-words (French), ID generators.
+
+---
+
+## Document Flow
+
+```mermaid
+graph LR
+    A[Devis] --> B[Bon de Commande]
+    B --> C[Bon de Livraison]
+    C --> D[Facture]
+    C2[Bon de Livraison 2] --> D
+    C3[Bon de Livraison N] --> D
+    D --> E[Règlement]
+```
+
+Both **Achats** and **Ventes** follow this same flow, mirrored.
+
+---
+
+## Key Design Decisions
+
+1. **Vanilla JS + Vite** — Lightweight, fast, no framework overhead. The app is a straightforward CRUD system that doesn't need React complexity.
+2. **localStorage** — Suitable for a single-user/single-machine desktop-style web app. Data persists across sessions.
+3. **Hash-based routing** — Simple SPA navigation without server configuration.
+4. **CSS Print** — PDF generation via `window.print()` + `@media print` CSS, avoiding heavy PDF libraries.
+5. **DZD Currency** — Algerian Dinar formatting throughout.
+
+---
+
+## Verification Plan
+
+### Browser Testing
+After building each module, I will open the app in the browser and verify:
+1. **Navigation**: All sidebar links work and render correct pages
+2. **CRUD Operations**: Create, read, update, delete for all entities
+3. **Document Flow**: Create Devis → convert to BC → create BL → create Facture with multiple BL
+4. **Tax Calculation**: Change tax % in settings and verify it applies on Devis and Factures
+5. **Stock Updates**: Verify stock increases on purchase BL and decreases on sale BL
+6. **Caisse**: Verify payments update cash balance
+7. **Print/PDF**: Verify documents render correctly in print preview
+
+### Manual Verification (User)
+- Review the UI in the browser at `http://localhost:5173`
+- Test the complete purchase and sale workflows
+- Verify French language throughout
+- Test print output for documents
