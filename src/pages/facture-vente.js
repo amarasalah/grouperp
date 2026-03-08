@@ -1,5 +1,5 @@
-// Facture Vente Page - unique product per invoice, no duplicates across invoices
-import { getAll, add, update, remove, getSettings, getNextNumber, deleteFactureWithReglements } from '../data/store.js';
+// Facture Vente Page - unique product per invoice, no duplicates across all modules
+import { getAll, add, update, remove, getSettings, getNextNumber, deleteFactureWithReglements, getUsedProductIds } from '../data/store.js';
 import { showToast, showModal, hideModal, confirmDialog, formatCurrency, formatDate, todayISO, numberToWords, printDocumentHeader } from '../utils/helpers.js';
 import { paginate, filterBarHTML, applyFilters, wireFilters } from '../utils/pagination.js';
 
@@ -12,18 +12,6 @@ export async function renderFactureVente() {
   const settings = await getSettings();
 
   let currentPage = 1, currentFilters = {};
-
-  // Build set of already-invoiced product IDs (across ALL factures vente)
-  function getInvoicedProductIds() {
-    const ids = new Set();
-    factures.forEach(f => {
-      (f.lignes || []).forEach(l => {
-        const pid = l.produitId || l.fromId;
-        if (pid) ids.add(pid);
-      });
-    });
-    return ids;
-  }
 
   function render(filters = currentFilters, page = currentPage) {
     currentFilters = filters; currentPage = page;
@@ -49,8 +37,8 @@ export async function renderFactureVente() {
     document.querySelectorAll('.delete-fv').forEach(b => b.onclick = async () => { if (await confirmDialog('Supprimer la facture et ses règlements ?')) { const n = await deleteFactureWithReglements('factures_vente', b.dataset.id); factures = factures.filter(x => x.id !== b.dataset.id); render(); showToast(`Supprimée (${n} règlement(s) supprimé(s))`); } });
   }
 
-  function openForm() {
-    const invoicedIds = getInvoicedProductIds();
+  async function openForm() {
+    const invoicedIds = await getUsedProductIds();
     const availBls = bls.filter(b => b.statut === 'Livré');
     const tax = settings.taxRate || 19;
 

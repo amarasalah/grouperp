@@ -1,5 +1,5 @@
-// Devis Achat Page - individual product selection, no qty (each poteau = 1)
-import { getAll, add, update, remove, getSettings, getNextNumber } from '../data/store.js';
+// Devis Achat Page - individual product selection, global uniqueness
+import { getAll, add, update, remove, getSettings, getNextNumber, getUsedProductIds } from '../data/store.js';
 import { showToast, showModal, hideModal, confirmDialog, formatCurrency, formatDate, todayISO, printDocumentHeader, numberToWords } from '../utils/helpers.js';
 import { paginate, filterBarHTML, applyFilters, wireFilters } from '../utils/pagination.js';
 
@@ -52,13 +52,18 @@ export async function renderDevisAchat() {
       <td><button type="button" class="btn btn-sm btn-danger remove-line">✗</button></td></tr>`;
   }
 
-  function openForm(dv = null) {
+  async function openForm(dv = null) {
     const isEdit = !!dv, taxRate = dv?.taxRate ?? settings.taxRate ?? 19;
+    // Get globally used product IDs, exclude current doc's own products when editing
+    const usedIds = await getUsedProductIds();
+    const editOwnIds = new Set();
+    if (dv?.lignes) dv.lignes.forEach(l => { const pid = l.produitId || l.fromId; if (pid) editOwnIds.add(pid); });
+
     showModal(isEdit ? 'Modifier Devis' : 'Nouveau Devis Achat', `<form id="da-form">
       <div class="form-row"><div class="form-group"><label class="form-label">Fournisseur *</label><select class="form-select" name="fournisseurId" required><option value="">--</option>${fournisseurs.map(f => `<option value="${f.id}" ${dv?.fournisseurId === f.id ? 'selected' : ''}>${f.raisonSociale}</option>`).join('')}</select></div>
         <div class="form-group"><label class="form-label">Date</label><input class="form-input" type="date" name="date" value="${dv?.date || todayISO()}"/></div></div>
       <div class="form-group"><label class="form-label">TVA (%)</label><input class="form-input" type="number" name="taxRate" id="da-tax" value="${taxRate}" style="max-width:150px"/></div>
-      <h4 style="margin:16px 0 8px">Poteaux</h4>
+      <h4 style="margin:16px 0 8px">Poteaux <small style="color:var(--text-muted)">(seuls les poteaux non-utilisés)</small></h4>
       <div class="table-wrapper"><table class="data-table line-items-table"><thead><tr><th>Catégorie</th><th>Poteau (ID)</th><th>Prix HT</th><th></th></tr></thead><tbody id="da-lines">${(dv?.lignes || [{}]).map(l => lineHtml(l)).join('')}</tbody></table></div>
       <button type="button" class="btn btn-secondary btn-sm" id="da-add-line">+ Ajouter Poteau</button>
       <div class="form-group" style="margin-top:12px"><label class="form-label">Note</label><textarea class="form-input" name="note" rows="2">${dv?.note || ''}</textarea></div>
@@ -66,7 +71,7 @@ export async function renderDevisAchat() {
     </form>`, `<button class="btn btn-secondary" onclick="document.getElementById('modal-overlay').classList.add('hidden')">Annuler</button><button class="btn btn-primary" id="save-da">${isEdit ? 'Modifier' : 'Créer'}</button>`);
     document.querySelector('.modal-container').style.maxWidth = '900px';
     wireAll();
-    if (dv?.lignes) { setTimeout(() => { document.querySelectorAll('#da-lines .line-row').forEach((row, i) => { const l = dv.lignes[i]; if (l?.categorieId) { row.querySelector('.line-cat').value = l.categorieId; populateProducts(row, l.categorieId, l.produitId); } }); recalcAll(); }, 100); }
+    if (dv?.lignes) { setTimeout(() => { document.querySelectorAll('#da-lines .line-row').forEach((row, i) => { const l = dv.lignes[i]; if (l?.categorieId) { row.querySelector('.line-cat').value = l.categorieId; populateProducts(row, l.categorieId, l.produitId || l.fromId); } }); recalcAll(); }, 100); }
     document.getElementById('da-add-line').onclick = () => { document.getElementById('da-lines').insertAdjacentHTML('beforeend', lineHtml()); wireAll(); };
     document.getElementById('da-tax').oninput = () => recalcAll();
     document.getElementById('save-da').onclick = async () => {
@@ -79,43 +84,44 @@ export async function renderDevisAchat() {
       if (isEdit) { await update('devis_achat', dv.id, data); Object.assign(dv, data); } else { data.numero = await getNextNumber('devisAchatPrefix'); const id = await add('devis_achat', data); devis.unshift({ id, ...data }); }
       hideModal(); render(); showToast(isEdit ? 'Modifié' : 'Créé');
     };
-  }
 
-  function populateProducts(row, catId, selProdId) {
-    const catProds = produits.filter(p => p.categorieId === catId).sort((a, b) => (a.numero || 0) - (b.numero || 0));
-    row.querySelector('.line-prod').innerHTML = `<option value="">-- Produit --</option>${catProds.map(p => `<option value="${p.id}" data-ref="${p.reference}" data-prix="${p.prixAchat || 0}" ${selProdId === p.id ? 'selected' : ''}>${p.reference}</option>`).join('')}`;
-  }
-  function wireAll() {
-    document.querySelectorAll('#da-lines .line-row').forEach(row => {
-      row.querySelector('.line-cat').onchange = e => { populateProducts(row, e.target.value); recalcRow(row); };
-      row.querySelector('.line-prod').onchange = () => recalcRow(row);
-      row.querySelector('.line-prix').oninput = () => { row.querySelector('.line-prix').dataset.userEdited = 'true'; recalcRow(row); };
-      row.querySelector('.remove-line').onclick = () => { if (document.getElementById('da-lines').children.length > 1) row.remove(); recalcAll(); };
-    });
-  }
-  function recalcRow(row) {
-    const prodOpt = row.querySelector('.line-prod').selectedOptions[0];
-    const prixInput = row.querySelector('.line-prix');
-    const productPrix = parseFloat(prodOpt?.dataset?.prix) || 0;
-    if (prodOpt?.value && productPrix > 0 && !prixInput.dataset.userEdited) prixInput.value = productPrix;
-    recalcAll();
-  }
-  function recalcAll() {
-    let ht = 0; document.querySelectorAll('#da-lines .line-row').forEach(r => { ht += parseFloat(r.querySelector('.line-prix').value) || 0; });
-    const t = parseFloat(document.getElementById('da-tax')?.value) || 0;
-    const h = document.getElementById('total-ht'), v = document.getElementById('total-tva'), c = document.getElementById('total-ttc');
-    if (h) h.textContent = formatCurrency(ht); if (v) v.textContent = formatCurrency(ht * t / 100); if (c) c.textContent = formatCurrency(ht + ht * t / 100);
-  }
-  function collectLines() {
-    const lines = []; document.querySelectorAll('#da-lines .line-row').forEach(row => {
-      const catSel = row.querySelector('.line-cat'), pSel = row.querySelector('.line-prod');
-      const prix = parseFloat(row.querySelector('.line-prix').value) || 0;
-      if (pSel.value) {
-        const cat = categories.find(c => c.id === catSel.value);
-        const prod = produits.find(p => p.id === pSel.value);
-        lines.push({ categorieId: catSel.value, categorieNom: cat?.nom || '', produitId: pSel.value, produitRef: prod?.reference || '', designation: prod?.reference || '', quantite: 1, prixUnitaire: prix, montant: prix });
-      }
-    }); return lines;
+    function populateProducts(row, catId, selProdId) {
+      const catProds = produits.filter(p => p.categorieId === catId && (!usedIds.has(p.id) || editOwnIds.has(p.id) || p.id === selProdId)).sort((a, b) => (a.numero || 0) - (b.numero || 0));
+      row.querySelector('.line-prod').innerHTML = `<option value="">-- Produit --</option>${catProds.map(p => `<option value="${p.id}" data-prix="${p.prixAchat || 0}" ${selProdId === p.id ? 'selected' : ''}>${p.reference}</option>`).join('')}`;
+    }
+    function wireAll() {
+      document.querySelectorAll('#da-lines .line-row').forEach(row => {
+        row.querySelector('.line-cat').onchange = e => { populateProducts(row, e.target.value); recalcRow(row); };
+        row.querySelector('.line-prod').onchange = () => recalcRow(row);
+        row.querySelector('.line-prix').oninput = () => { row.querySelector('.line-prix').dataset.userEdited = 'true'; recalcRow(row); };
+        row.querySelector('.remove-line').onclick = () => { if (document.getElementById('da-lines').children.length > 1) row.remove(); recalcAll(); };
+      });
+    }
+    function recalcRow(row) {
+      const prodOpt = row.querySelector('.line-prod').selectedOptions[0];
+      const prixInput = row.querySelector('.line-prix');
+      const productPrix = parseFloat(prodOpt?.dataset?.prix) || 0;
+      if (prodOpt?.value && productPrix > 0 && !prixInput.dataset.userEdited) prixInput.value = productPrix;
+      recalcAll();
+    }
+    function recalcAll() {
+      let ht = 0; document.querySelectorAll('#da-lines .line-row').forEach(r => { ht += parseFloat(r.querySelector('.line-prix').value) || 0; });
+      const t = parseFloat(document.getElementById('da-tax')?.value) || 0;
+      const h = document.getElementById('total-ht'), v = document.getElementById('total-tva'), c = document.getElementById('total-ttc');
+      if (h) h.textContent = formatCurrency(ht); if (v) v.textContent = formatCurrency(ht * t / 100); if (c) c.textContent = formatCurrency(ht + ht * t / 100);
+    }
+    function collectLines() {
+      const lines = [], seen = new Set(); document.querySelectorAll('#da-lines .line-row').forEach(row => {
+        const catSel = row.querySelector('.line-cat'), pSel = row.querySelector('.line-prod');
+        const prix = parseFloat(row.querySelector('.line-prix').value) || 0;
+        if (pSel.value) {
+          if (seen.has(pSel.value)) { showToast('Poteau en double!', 'error'); return; }
+          seen.add(pSel.value);
+          const cat = categories.find(c => c.id === catSel.value), prod = produits.find(p => p.id === pSel.value);
+          lines.push({ categorieId: catSel.value, categorieNom: cat?.nom || '', produitId: pSel.value, produitRef: prod?.reference || '', designation: prod?.reference || '', quantite: 1, prixUnitaire: prix, montant: prix });
+        }
+      }); return lines;
+    }
   }
 
   function viewDoc(d) {

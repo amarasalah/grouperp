@@ -1,5 +1,5 @@
-// BL Achat Page - individual product, no qty (each poteau = 1)
-import { getAll, add, update, remove, getSettings, getNextNumber, updateStock } from '../data/store.js';
+// BL Achat Page - individual product, global uniqueness
+import { getAll, add, update, remove, getSettings, getNextNumber, updateStock, getUsedProductIds } from '../data/store.js';
 import { showToast, showModal, hideModal, confirmDialog, formatDate, todayISO, printDocumentHeader } from '../utils/helpers.js';
 import { paginate, filterBarHTML, applyFilters, wireFilters } from '../utils/pagination.js';
 
@@ -16,7 +16,6 @@ export async function renderBlAchat() {
         currentFilters = filters; currentPage = page;
         const filtered = applyFilters(bls, { ...filters, searchFields: ['numero', 'fournisseurNom', 'bcRef'] });
         const paged = paginate(filtered, page, 'pagination-controls', p => render(filters, p));
-
         content.innerHTML = `
       <div class="page-header"><div><h1 class="page-title">🚛 Bon de Livraison Achat</h1><p class="page-subtitle">Réception fournisseurs</p></div>
         <button class="btn btn-primary" id="add-bla-btn">+ Nouveau BL</button></div>
@@ -27,7 +26,6 @@ export async function renderBlAchat() {
           <td class="actions"><button class="btn btn-sm btn-secondary view-bla" data-id="${b.id}">👁️</button>${b.statut !== 'Réceptionné' ? `<button class="btn btn-sm btn-success validate-bla" data-id="${b.id}">✓</button>` : ''}<button class="btn btn-sm btn-danger delete-bla" data-id="${b.id}">🗑️</button></td></tr>`).join('')}
       </tbody></table></div>` : `<div class="empty-state"><div class="icon">🚛</div><div class="title">Aucun BL achat</div></div>`}
       <div id="pagination-controls" class="pagination-container"></div>`;
-
         paginate(filtered, page, 'pagination-controls', p => render(filters, p));
         wireFilters((f, p) => render(f, p));
         document.getElementById('add-bla-btn').onclick = () => openForm();
@@ -35,11 +33,7 @@ export async function renderBlAchat() {
         document.querySelectorAll('.validate-bla').forEach(b => b.onclick = async () => {
             const bl = bls.find(x => x.id === b.dataset.id);
             if (bl && await confirmDialog('Valider la réception ? Stock sera mis à jour.')) {
-                try {
-                    for (const l of (bl.lignes || [])) {
-                        if (l.produitId) await updateStock(l.produitId, 1, 'entree', bl.numero);
-                    }
-                } catch (e) { console.warn('Stock update error:', e); }
+                try { for (const l of (bl.lignes || [])) { if (l.produitId) await updateStock(l.produitId, 1, 'entree', bl.numero); } } catch (e) { console.warn('Stock update error:', e); }
                 await update('bl_achat', bl.id, { statut: 'Réceptionné' }); bl.statut = 'Réceptionné'; render(); showToast('BL réceptionné');
             }
         });
@@ -53,9 +47,11 @@ export async function renderBlAchat() {
       <td><button type="button" class="btn btn-sm btn-danger remove-line">✗</button></td></tr>`;
     }
 
-    function openForm() {
+    async function openForm() {
+        const usedIds = await getUsedProductIds();
         showModal('Nouveau BL Achat', `<form id="bla-form"><div class="form-row"><div class="form-group"><label class="form-label">Fournisseur *</label><select class="form-select" name="fournisseurId" required><option value="">--</option>${fournisseurs.map(f => `<option value="${f.id}">${f.raisonSociale}</option>`).join('')}</select></div><div class="form-group"><label class="form-label">Date</label><input class="form-input" type="date" name="date" value="${todayISO()}"/></div></div>
-      <h4 style="margin:16px 0 8px">Poteaux</h4><div class="table-wrapper"><table class="data-table line-items-table"><thead><tr><th>Catégorie</th><th>Poteau (ID)</th><th></th></tr></thead><tbody id="bla-lines">${lineHtml()}</tbody></table></div>
+      <h4 style="margin:16px 0 8px">Poteaux <small style="color:var(--text-muted)">(seuls les poteaux non-utilisés)</small></h4>
+      <div class="table-wrapper"><table class="data-table line-items-table"><thead><tr><th>Catégorie</th><th>Poteau (ID)</th><th></th></tr></thead><tbody id="bla-lines">${lineHtml()}</tbody></table></div>
       <button type="button" class="btn btn-secondary btn-sm" id="bla-add-line">+ Ajouter Poteau</button>
       <div class="form-group" style="margin-top:12px"><label class="form-label">Note</label><textarea class="form-input" name="note" rows="2"></textarea></div>
     </form>`, `<button class="btn btn-secondary" onclick="document.getElementById('modal-overlay').classList.add('hidden')">Annuler</button><button class="btn btn-primary" id="save-bla">Créer</button>`);
@@ -66,33 +62,33 @@ export async function renderBlAchat() {
             if (!fid) { showToast('Fournisseur requis', 'error'); return; }
             const four = fournisseurs.find(x => x.id === fid), dt = f.querySelector('[name="date"]').value, lines = collectLines();
             if (!lines.length) { showToast('Ajoutez un poteau', 'error'); return; }
-            const n = await getNextNumber('blAchatPrefix');
-            const note = f.querySelector('[name="note"]').value;
+            const n = await getNextNumber('blAchatPrefix'), note = f.querySelector('[name="note"]').value;
             const id = await add('bl_achat', { numero: n, date: dt, fournisseurId: fid, fournisseurNom: four?.raisonSociale || '', lignes: lines, statut: 'En attente', note });
             bls.unshift({ id, numero: n, date: dt, fournisseurId: fid, fournisseurNom: four?.raisonSociale || '', lignes: lines, statut: 'En attente', note });
             hideModal(); render(); showToast(`BL ${n} créé`);
         };
-    }
 
-    function populateProducts(row, catId) {
-        const catProds = produits.filter(p => p.categorieId === catId).sort((a, b) => (a.numero || 0) - (b.numero || 0));
-        row.querySelector('.line-prod').innerHTML = `<option value="">-- Produit --</option>${catProds.map(p => `<option value="${p.id}" data-ref="${p.reference}">${p.reference}</option>`).join('')}`;
-    }
-    function wireAll() {
-        document.querySelectorAll('#bla-lines .line-row').forEach(row => {
-            row.querySelector('.line-cat').onchange = e => populateProducts(row, e.target.value);
-            row.querySelector('.remove-line').onclick = () => { if (document.getElementById('bla-lines').children.length > 1) row.remove(); };
-        });
-    }
-    function collectLines() {
-        const lines = []; document.querySelectorAll('#bla-lines .line-row').forEach(row => {
-            const catSel = row.querySelector('.line-cat'), pSel = row.querySelector('.line-prod');
-            if (pSel.value) {
-                const cat = categories.find(c => c.id === catSel.value);
-                const prod = produits.find(p => p.id === pSel.value);
-                lines.push({ categorieId: catSel.value, categorieNom: cat?.nom || '', produitId: pSel.value, produitRef: prod?.reference || '', designation: prod?.reference || '', quantite: 1 });
-            }
-        }); return lines;
+        function populateProducts(row, catId) {
+            const catProds = produits.filter(p => p.categorieId === catId && !usedIds.has(p.id)).sort((a, b) => (a.numero || 0) - (b.numero || 0));
+            row.querySelector('.line-prod').innerHTML = `<option value="">-- Produit --</option>${catProds.map(p => `<option value="${p.id}">${p.reference}</option>`).join('')}`;
+        }
+        function wireAll() {
+            document.querySelectorAll('#bla-lines .line-row').forEach(row => {
+                row.querySelector('.line-cat').onchange = e => populateProducts(row, e.target.value);
+                row.querySelector('.remove-line').onclick = () => { if (document.getElementById('bla-lines').children.length > 1) row.remove(); };
+            });
+        }
+        function collectLines() {
+            const lines = [], seen = new Set(); document.querySelectorAll('#bla-lines .line-row').forEach(row => {
+                const catSel = row.querySelector('.line-cat'), pSel = row.querySelector('.line-prod');
+                if (pSel.value) {
+                    if (seen.has(pSel.value)) { showToast('Poteau en double!', 'error'); return; }
+                    seen.add(pSel.value);
+                    const cat = categories.find(c => c.id === catSel.value), prod = produits.find(p => p.id === pSel.value);
+                    lines.push({ categorieId: catSel.value, categorieNom: cat?.nom || '', produitId: pSel.value, produitRef: prod?.reference || '', designation: prod?.reference || '', quantite: 1 });
+                }
+            }); return lines;
+        }
     }
 
     function viewBl(b) {

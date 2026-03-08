@@ -193,4 +193,27 @@ export async function deleteFactureWithReglements(factureCollection, factureId) 
     return related.length;
 }
 
-
+// ===== GLOBAL PRODUCT UNIQUENESS =====
+/**
+ * Get all product IDs already used in ANY document across achat & vente.
+ * Scans: devis_achat, bc_achat, bl_achat, factures_achat,
+ *        devis_vente, bc_vente, bl_vente, factures_vente
+ * Returns a Set of produit IDs.
+ */
+export async function getUsedProductIds() {
+    const collections = [
+        'devis_achat', 'bc_achat', 'bl_achat', 'factures_achat',
+        'devis_vente', 'bc_vente', 'bl_vente', 'factures_vente'
+    ];
+    const ids = new Set();
+    const results = await Promise.all(collections.map(c => getAll(c).catch(() => [])));
+    results.forEach(docs => {
+        docs.forEach(doc => {
+            (doc.lignes || []).forEach(l => {
+                const pid = l.produitId || l.fromId;
+                if (pid) ids.add(pid);
+            });
+        });
+    });
+    return ids;
+}
