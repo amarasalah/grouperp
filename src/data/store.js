@@ -196,13 +196,10 @@ export async function deleteFactureWithReglements(factureCollection, factureId) 
 // ===== GLOBAL PRODUCT UNIQUENESS =====
 /**
  * Get all product IDs already used in ANY document across achat & vente.
- * Scans: devis_achat, bc_achat, bl_achat, factures_achat,
- *        devis_vente, bc_vente, bl_vente, factures_vente
- * Returns a Set of produit IDs.
  */
 export async function getUsedProductIds() {
     const collections = [
-        'devis_achat', 'bc_achat', 'bl_achat', 'factures_achat',
+        'bl_achat', 'factures_achat',
         'devis_vente', 'bc_vente', 'bl_vente', 'factures_vente'
     ];
     const ids = new Set();
@@ -216,4 +213,46 @@ export async function getUsedProductIds() {
         });
     });
     return ids;
+}
+
+// ===== SELLABLE PRODUCTS (for Vente module) =====
+/**
+ * Get product IDs that are sellable:
+ * - Have a BL Achat (réceptionné = in stock)
+ * - NOT already used in any BL Vente or Devis/BC Vente
+ * Returns { inStockIds: Set, soldIds: Set, sellableIds: Set }
+ */
+export async function getSellableProductIds() {
+    const [blAchats, blVentes, devisVentes, bcVentes] = await Promise.all([
+        getAll('bl_achat').catch(() => []),
+        getAll('bl_vente').catch(() => []),
+        getAll('devis_vente').catch(() => []),
+        getAll('bc_vente').catch(() => []),
+    ]);
+
+    // Products in stock = in a BL Achat with statut 'Réceptionné'
+    const inStockIds = new Set();
+    blAchats.filter(b => b.statut === 'Réceptionné').forEach(bl => {
+        (bl.lignes || []).forEach(l => {
+            const pid = l.produitId || l.fromId;
+            if (pid) inStockIds.add(pid);
+        });
+    });
+
+    // Products already used in vente documents
+    const usedInVenteIds = new Set();
+    [...blVentes, ...devisVentes, ...bcVentes].forEach(doc => {
+        (doc.lignes || []).forEach(l => {
+            const pid = l.produitId || l.fromId;
+            if (pid) usedInVenteIds.add(pid);
+        });
+    });
+
+    // Sellable = in stock AND not used in vente
+    const sellableIds = new Set();
+    inStockIds.forEach(id => {
+        if (!usedInVenteIds.has(id)) sellableIds.add(id);
+    });
+
+    return { inStockIds, usedInVenteIds, sellableIds };
 }

@@ -1,5 +1,5 @@
 // BL Vente Page - individual product, global uniqueness
-import { getAll, add, update, remove, getSettings, getNextNumber, updateStock, getUsedProductIds } from '../data/store.js';
+import { getAll, add, update, remove, getSettings, getNextNumber, updateStock, getSellableProductIds } from '../data/store.js';
 import { showToast, showModal, hideModal, confirmDialog, formatDate, todayISO, printDocumentHeader } from '../utils/helpers.js';
 import { paginate, filterBarHTML, applyFilters, wireFilters } from '../utils/pagination.js';
 
@@ -8,7 +8,7 @@ export async function renderBlVente() {
     let bls = await getAll('bl_vente').catch(() => []);
     const clients = await getAll('clients').catch(() => []);
     const produits = await getAll('produits').catch(() => []);
-    const categories = await getAll('categories').catch(() => []);
+    const types = await getAll('types').catch(() => []);
     const settings = await getSettings();
     let currentPage = 1, currentFilters = {};
 
@@ -42,15 +42,15 @@ export async function renderBlVente() {
 
     function lineHtml(l = {}) {
         return `<tr class="line-row">
-      <td><select class="form-select line-cat" style="min-width:130px"><option value="">-- Catégorie --</option>${categories.map(c => `<option value="${c.id}" ${l.categorieId === c.id ? 'selected' : ''}>${c.nom}</option>`).join('')}</select></td>
+      <td><select class="form-select line-cat" style="min-width:130px"><option value="">-- Type --</option>${types.map(t => `<option value="${t.id}" ${l.typeId === t.id ? 'selected' : ''}>${t.nom}</option>`).join('')}</select></td>
       <td><select class="form-select line-prod" style="min-width:200px"><option value="">-- Produit --</option></select></td>
       <td><button type="button" class="btn btn-sm btn-danger remove-line">✗</button></td></tr>`;
     }
 
     async function openForm() {
-        const usedIds = await getUsedProductIds();
+        const { sellableIds } = await getSellableProductIds();
         showModal('Nouveau BL Vente', `<form id="blv-form"><div class="form-row"><div class="form-group"><label class="form-label">Client *</label><select class="form-select" name="clientId" required><option value="">--</option>${clients.map(c => `<option value="${c.id}">${c.raisonSociale}</option>`).join('')}</select></div><div class="form-group"><label class="form-label">Date</label><input class="form-input" type="date" name="date" value="${todayISO()}"/></div></div>
-      <h4 style="margin:16px 0 8px">Poteaux <small style="color:var(--text-muted)">(seuls les poteaux non-utilisés)</small></h4>
+      <h4 style="margin:16px 0 8px">Poteaux <small style="color:var(--text-muted)">(en stock et non vendus)</small></h4>
       <div class="table-wrapper"><table class="data-table line-items-table"><thead><tr><th>Catégorie</th><th>Poteau (ID)</th><th></th></tr></thead><tbody id="blv-lines">${lineHtml()}</tbody></table></div>
       <button type="button" class="btn btn-secondary btn-sm" id="blv-add-line">+ Ajouter Poteau</button>
       <div class="form-group" style="margin-top:12px"><label class="form-label">Note</label><textarea class="form-input" name="note" rows="2"></textarea></div>
@@ -69,7 +69,7 @@ export async function renderBlVente() {
         };
 
         function populateProducts(row, catId) {
-            const catProds = produits.filter(p => p.categorieId === catId && !usedIds.has(p.id)).sort((a, b) => (a.numero || 0) - (b.numero || 0));
+            const catProds = produits.filter(p => p.typeId === catId && sellableIds.has(p.id)).sort((a, b) => (a.numero || 0) - (b.numero || 0));
             row.querySelector('.line-prod').innerHTML = `<option value="">-- Produit --</option>${catProds.map(p => `<option value="${p.id}">${p.reference}</option>`).join('')}`;
         }
         function wireAll() {
@@ -84,8 +84,8 @@ export async function renderBlVente() {
                 if (pSel.value) {
                     if (seen.has(pSel.value)) { showToast('Poteau en double!', 'error'); return; }
                     seen.add(pSel.value);
-                    const cat = categories.find(c => c.id === catSel.value), prod = produits.find(p => p.id === pSel.value);
-                    lines.push({ categorieId: catSel.value, categorieNom: cat?.nom || '', produitId: pSel.value, produitRef: prod?.reference || '', designation: prod?.reference || '', quantite: 1 });
+                    const tp = types.find(t => t.id === catSel.value), prod = produits.find(p => p.id === pSel.value);
+                    lines.push({ typeId: catSel.value, typeNom: tp?.nom || '', produitId: pSel.value, produitRef: prod?.reference || '', designation: prod?.reference || '', quantite: 1 });
                 }
             }); return lines;
         }

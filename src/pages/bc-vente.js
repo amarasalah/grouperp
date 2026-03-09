@@ -1,5 +1,5 @@
 // BC Vente Page - individual product, global uniqueness
-import { getAll, add, update, remove, getSettings, getNextNumber, getUsedProductIds } from '../data/store.js';
+import { getAll, add, update, remove, getSettings, getNextNumber, getSellableProductIds } from '../data/store.js';
 import { showToast, showModal, hideModal, confirmDialog, formatCurrency, formatDate, todayISO, printDocumentHeader } from '../utils/helpers.js';
 import { paginate, filterBarHTML, applyFilters, wireFilters } from '../utils/pagination.js';
 
@@ -8,7 +8,7 @@ export async function renderBcVente() {
   let bcs = await getAll('bc_vente').catch(() => []);
   const clients = await getAll('clients').catch(() => []);
   const produits = await getAll('produits').catch(() => []);
-  const categories = await getAll('categories').catch(() => []);
+  const types = await getAll('types').catch(() => []);
   const settings = await getSettings();
   let currentPage = 1, currentFilters = {};
 
@@ -43,7 +43,7 @@ export async function renderBcVente() {
 
   function lineHtml(l = {}) {
     return `<tr class="line-row">
-      <td><select class="form-select line-cat" style="min-width:130px"><option value="">-- Catégorie --</option>${categories.map(c => `<option value="${c.id}" ${l.categorieId === c.id ? 'selected' : ''}>${c.nom}</option>`).join('')}</select></td>
+      <td><select class="form-select line-cat" style="min-width:130px"><option value="">-- Type --</option>${types.map(t => `<option value="${t.id}" ${l.typeId === t.id ? 'selected' : ''}>${t.nom}</option>`).join('')}</select></td>
       <td><select class="form-select line-prod" style="min-width:200px"><option value="">-- Produit --</option></select></td>
       <td><input class="form-input line-prix" type="number" step="0.001" value="${l.prixUnitaire || 0}" style="width:110px"/></td>
       <td><button type="button" class="btn btn-sm btn-danger remove-line">✗</button></td></tr>`;
@@ -51,7 +51,7 @@ export async function renderBcVente() {
 
   async function openForm(bc = null) {
     const isEdit = !!bc, taxRate = bc?.taxRate ?? settings.taxRate ?? 19;
-    const usedIds = await getUsedProductIds();
+    const { sellableIds } = await getSellableProductIds();
     const editOwnIds = new Set();
     if (bc?.lignes) bc.lignes.forEach(l => { const pid = l.produitId || l.fromId; if (pid) editOwnIds.add(pid); });
 
@@ -59,7 +59,7 @@ export async function renderBcVente() {
       <div class="form-row"><div class="form-group"><label class="form-label">Client *</label><select class="form-select" name="clientId" required><option value="">--</option>${clients.map(c => `<option value="${c.id}" ${bc?.clientId === c.id ? 'selected' : ''}>${c.raisonSociale}</option>`).join('')}</select></div>
         <div class="form-group"><label class="form-label">Date</label><input class="form-input" type="date" name="date" value="${bc?.date || todayISO()}"/></div></div>
       <div class="form-group"><label class="form-label">TVA (%)</label><input class="form-input" type="number" name="taxRate" id="bcv-tax" value="${taxRate}" style="max-width:150px"/></div>
-      <h4 style="margin:16px 0 8px">Poteaux <small style="color:var(--text-muted)">(seuls les poteaux non-utilisés)</small></h4>
+      <h4 style="margin:16px 0 8px">Poteaux <small style="color:var(--text-muted)">(en stock et non vendus)</small></h4>
       <div class="table-wrapper"><table class="data-table line-items-table"><thead><tr><th>Catégorie</th><th>Poteau (ID)</th><th>Prix HT</th><th></th></tr></thead><tbody id="bcv-lines">${(bc?.lignes || [{}]).map(l => lineHtml(l)).join('')}</tbody></table></div>
       <button type="button" class="btn btn-secondary btn-sm" id="bcv-add-line">+ Ajouter Poteau</button>
       <div class="form-group" style="margin-top:12px"><label class="form-label">Note</label><textarea class="form-input" name="note" rows="2">${bc?.note || ''}</textarea></div>
@@ -67,7 +67,7 @@ export async function renderBcVente() {
     </form>`, `<button class="btn btn-secondary" onclick="document.getElementById('modal-overlay').classList.add('hidden')">Annuler</button><button class="btn btn-primary" id="save-bcv">${isEdit ? 'Modifier' : 'Créer'}</button>`);
     document.querySelector('.modal-container').style.maxWidth = '900px';
     wireAll();
-    if (bc?.lignes) { setTimeout(() => { document.querySelectorAll('#bcv-lines .line-row').forEach((row, i) => { const l = bc.lignes[i]; if (l?.categorieId) { row.querySelector('.line-cat').value = l.categorieId; populateProducts(row, l.categorieId, l.produitId || l.fromId); } }); recalcAll(); }, 100); }
+    if (bc?.lignes) { setTimeout(() => { document.querySelectorAll('#bcv-lines .line-row').forEach((row, i) => { const l = bc.lignes[i]; if (l?.typeId) { row.querySelector('.line-cat').value = l.typeId; populateProducts(row, l.typeId, l.produitId || l.fromId); } }); recalcAll(); }, 100); }
     document.getElementById('bcv-add-line').onclick = () => { document.getElementById('bcv-lines').insertAdjacentHTML('beforeend', lineHtml()); wireAll(); };
     document.getElementById('bcv-tax').oninput = () => recalcAll();
     document.getElementById('save-bcv').onclick = async () => {
@@ -82,8 +82,8 @@ export async function renderBcVente() {
     };
 
     function populateProducts(row, catId, selProdId) {
-      const catProds = produits.filter(p => p.categorieId === catId && (!usedIds.has(p.id) || editOwnIds.has(p.id) || p.id === selProdId)).sort((a, b) => (a.numero || 0) - (b.numero || 0));
-      row.querySelector('.line-prod').innerHTML = `<option value="">-- Produit --</option>${catProds.map(p => `<option value="${p.id}" data-prix="${p.prixVente || 0}" ${selProdId === p.id ? 'selected' : ''}>${p.reference}</option>`).join('')}`;
+      const catProds = produits.filter(p => p.typeId === catId && (sellableIds.has(p.id) || editOwnIds.has(p.id) || p.id === selProdId)).sort((a, b) => (a.numero || 0) - (b.numero || 0));
+      row.querySelector('.line-prod').innerHTML = `<option value="">-- Produit --</option>${catProds.map(p => `<option value="${p.id}" data-prix="0" ${selProdId === p.id ? 'selected' : ''}>${p.reference}</option>`).join('')}`;
     }
     function wireAll() {
       document.querySelectorAll('#bcv-lines .line-row').forEach(row => {
@@ -113,8 +113,8 @@ export async function renderBcVente() {
         if (pSel.value) {
           if (seen.has(pSel.value)) { showToast('Poteau en double!', 'error'); return; }
           seen.add(pSel.value);
-          const cat = categories.find(c => c.id === catSel.value), prod = produits.find(p => p.id === pSel.value);
-          lines.push({ categorieId: catSel.value, categorieNom: cat?.nom || '', produitId: pSel.value, produitRef: prod?.reference || '', designation: prod?.reference || '', quantite: 1, prixUnitaire: prix, montant: prix });
+          const tp = types.find(t => t.id === catSel.value), prod = produits.find(p => p.id === pSel.value);
+          lines.push({ typeId: catSel.value, typeNom: tp?.nom || '', produitId: pSel.value, produitRef: prod?.reference || '', designation: prod?.reference || '', quantite: 1, prixUnitaire: prix, montant: prix });
         }
       }); return lines;
     }
