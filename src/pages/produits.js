@@ -60,11 +60,10 @@ export async function renderProduits() {
       <div class="form-group"><label class="form-label">Lot *</label><select class="form-select" name="lotId" id="prod-lot" ${isEdit ? 'disabled' : ''} required>
         <option value="">-- Sélectionner un lot --</option>
         ${lots.map(l => {
-          const count = produits.filter(p => p.lotId === l.id).length;
-          const full = count >= (l.maxProduits || 0);
-          return `<option value="${l.id}" ${existing?.lotId === l.id ? 'selected' : ''} ${!isEdit && full ? 'disabled' : ''}>${l.numero} (${count}/${l.maxProduits}${full ? ' - PLEIN' : ''})</option>`;
+          return `<option value="${l.id}" ${existing?.lotId === l.id ? 'selected' : ''}>${l.numero}</option>`;
         }).join('')}
       </select></div>
+      <div id="lot-cat-info" style="margin-bottom:12px;display:none"></div>
       <div class="form-row"><div class="form-group"><label class="form-label">Catégorie *</label><select class="form-select" name="categorieId" id="prod-cat" ${isEdit ? 'disabled' : ''} required><option value="">--</option>${categories.map(c => `<option value="${c.id}" ${existing?.categorieId === c.id ? 'selected' : ''}>${c.nom}</option>`).join('')}</select></div>
         <div class="form-group"><label class="form-label">Fournisseur *</label><select class="form-select" name="fournisseurId" id="prod-four" required><option value="">--</option>${fournisseurs.map(f => `<option value="${f.id}" ${existing?.fournisseurId === f.id ? 'selected' : ''}>${f.raisonSociale}</option>`).join('')}</select></div></div>
       <div class="form-group"><label class="form-label">ID Poteau *</label><input class="form-input" id="prod-ref" value="${existing?.reference || ''}" placeholder="Tapez l'identifiant du poteau" ${isEdit ? 'disabled' : ''} required style="font-weight:600;color:var(--accent);font-size:1.05rem"/></div>
@@ -76,19 +75,35 @@ export async function renderProduits() {
       <div class="form-group"><label class="form-label">Unité</label><input class="form-input" name="unite" value="${existing?.unite || 'Unité'}"/></div>
     </form>`, `<button class="btn btn-secondary" onclick="document.getElementById('modal-overlay').classList.add('hidden')">Annuler</button><button class="btn btn-primary" id="save-prod">${isEdit ? 'Modifier' : 'Créer'}</button>`);
 
-    // Auto-fill prices when lot + category change
-    function updatePrices() {
+    // Auto-fill prices and show per-category limits when lot + category change
+    function updatePricesAndInfo() {
       const lotId = document.getElementById('prod-lot').value;
       const catId = document.getElementById('prod-cat').value;
       const lot = lots.find(l => l.id === lotId);
+      const infoDiv = document.getElementById('lot-cat-info');
+      if (lot) {
+        // Show per-category breakdown for this lot
+        const lotProds = produits.filter(p => p.lotId === lotId);
+        const rows = (lot.prixParCategorie || []).map(cp => {
+          const count = lotProds.filter(p => p.categorieId === cp.categorieId).length;
+          const max = cp.maxProduits || 0;
+          const cls = count >= max ? 'color:var(--danger);font-weight:700' : 'color:var(--success)';
+          return `<span style="${cls};margin-right:10px">${cp.categorieNom}: ${count}/${max}</span>`;
+        }).join('');
+        infoDiv.innerHTML = `<div style="padding:8px 12px;background:var(--bg-input);border-radius:var(--radius-sm);border:1px solid var(--border-color);font-size:0.82rem">${rows || 'Aucune cat\u00e9gorie d\u00e9finie'}</div>`;
+        infoDiv.style.display = 'block';
+      } else {
+        infoDiv.style.display = 'none';
+      }
       if (lot && catId) {
         const catPrix = (lot.prixParCategorie || []).find(p => p.categorieId === catId);
         document.getElementById('prod-prix-achat').value = catPrix?.prixAchat || 0;
         document.getElementById('prod-prix-vente').value = catPrix?.prixVente || 0;
       }
     }
-    document.getElementById('prod-lot').onchange = updatePrices;
-    document.getElementById('prod-cat').onchange = updatePrices;
+    document.getElementById('prod-lot').onchange = updatePricesAndInfo;
+    document.getElementById('prod-cat').onchange = updatePricesAndInfo;
+    if (isEdit) updatePricesAndInfo();
 
     document.getElementById('save-prod').onclick = async () => {
       const f = document.getElementById('prod-form');
@@ -116,9 +131,13 @@ export async function renderProduits() {
         Object.assign(existing, data);
         hideModal(); render(); showToast('Modifié');
       } else {
-        // Check lot limit
-        const lotCount = produits.filter(p => p.lotId === lotId).length;
-        if (lotCount >= (lot?.maxProduits || 0)) { showToast(`Lot "${lot.numero}" est plein (${lot.maxProduits} max)`, 'error'); return; }
+        // Check per-category lot limit
+        const catLimit = (lot?.prixParCategorie || []).find(cp => cp.categorieId === catId);
+        const catMax = catLimit?.maxProduits || 0;
+        const catCount = produits.filter(p => p.lotId === lotId && p.categorieId === catId).length;
+        if (catMax > 0 && catCount >= catMax) {
+          showToast(`Lot "${lot.numero}" — catégorie "${cat?.nom}" est pleine (${catCount}/${catMax})`, 'error'); return;
+        }
         // Check duplicate
         if (produits.some(p => p.reference === ref)) { showToast(`ID "${ref}" existe déjà !`, 'error'); return; }
         const numMatch = ref.match(/(\d+)$/);

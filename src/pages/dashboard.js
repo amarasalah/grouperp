@@ -60,7 +60,8 @@ export async function renderDashboard() {
     let entrees = 0, sorties = 0;
     receivedBL.forEach(bl => (bl.lignes || []).forEach(l => { if (l.lotId === lot.id) entrees++; }));
     deliveredBL.forEach(bl => (bl.lignes || []).forEach(l => { if (l.lotId === lot.id) sorties++; }));
-    return { numero: lot.numero, total: lotProds.length, max: lot.maxProduits || 0, entrees, sorties, stock: entrees - sorties };
+    const totalMax = (lot.prixParCategorie || []).reduce((s, cp) => s + (cp.maxProduits || 0), 0) || lot.maxProduits || 0;
+    return { numero: lot.numero, total: lotProds.length, max: totalMax, entrees, sorties, stock: entrees - sorties };
   });
 
   // ── Stock by Category ──

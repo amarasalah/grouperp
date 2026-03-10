@@ -268,3 +268,37 @@ export async function getVenteUsedProductIds() {
     });
     return ids;
 }
+
+/**
+ * Get product IDs already invoiced in factures_vente ONLY.
+ * Used by facture-vente to exclude already-invoiced products
+ * without excluding products that are merely in BL/BC vente.
+ */
+export async function getInvoicedVenteProductIds() {
+    const factures = await getAll('factures_vente').catch(() => []);
+    const ids = new Set();
+    factures.forEach(doc => {
+        (doc.lignes || []).forEach(l => {
+            const pid = l.produitId || l.fromId;
+            if (pid) ids.add(pid);
+        });
+    });
+    return ids;
+}
+
+/**
+ * Get product IDs already invoiced in factures_achat ONLY.
+ * Used by facture-achat to exclude already-invoiced products
+ * without excluding products that are merely in BL achat.
+ */
+export async function getInvoicedAchatProductIds() {
+    const factures = await getAll('factures_achat').catch(() => []);
+    const ids = new Set();
+    factures.forEach(doc => {
+        (doc.lignes || []).forEach(l => {
+            const pid = l.produitId || l.fromId;
+            if (pid) ids.add(pid);
+        });
+    });
+    return ids;
+}

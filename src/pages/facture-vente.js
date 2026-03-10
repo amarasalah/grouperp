@@ -1,5 +1,5 @@
 // Facture Vente Page - unique product per invoice, no duplicates across all modules
-import { getAll, add, update, remove, getSettings, getNextNumber, deleteFactureWithReglements, getUsedProductIds } from '../data/store.js';
+import { getAll, add, update, remove, getSettings, getNextNumber, deleteFactureWithReglements, getInvoicedVenteProductIds } from '../data/store.js';
 import { showToast, showModal, hideModal, confirmDialog, formatCurrency, formatDate, todayISO, numberToWords, printDocumentHeader } from '../utils/helpers.js';
 import { paginate, filterBarHTML, applyFilters, wireFilters } from '../utils/pagination.js';
 
@@ -38,7 +38,7 @@ export async function renderFactureVente() {
   }
 
   async function openForm() {
-    const invoicedIds = await getUsedProductIds();
+    const invoicedIds = await getInvoicedVenteProductIds();
     const availBls = bls.filter(b => b.statut === 'Livré');
     const tax = settings.taxRate || 19;
 

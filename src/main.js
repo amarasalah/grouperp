@@ -20,41 +20,41 @@ import { renderReglements } from './pages/reglements.js';
 const NAV_ITEMS = [
     {
         section: 'Principal', items: [
-            { icon: '📊', label: 'Tableau de Bord', route: '/' },
+            { icon: '�', label: 'Tableau de Bord', route: '/' },
         ]
     },
     {
         section: 'Catalogue', items: [
-            { icon: '📁', label: 'Catégories', route: '/categories' },
-            { icon: '📦', label: 'Lots', route: '/lots' },
-            { icon: '🏗️', label: 'Produits (Poteaux)', route: '/produits' },
+            { icon: '�️', label: 'Catégories', route: '/categories' },
+            { icon: '🎯', label: 'Lots', route: '/lots' },
+            { icon: '🪵', label: 'Produits (Poteaux)', route: '/produits' },
         ]
     },
     {
         section: 'Achats', items: [
-            { icon: '🏢', label: 'Fournisseurs', route: '/fournisseurs' },
-            { icon: '', label: 'Bon de Livraison', route: '/bl-achat' },
-            { icon: '🧾', label: 'Facture Achat', route: '/facture-achat' },
+            { icon: '�', label: 'Fournisseurs', route: '/fournisseurs' },
+            { icon: '📥', label: 'Bon de Livraison', route: '/bl-achat' },
+            { icon: '📋', label: 'Facture Achat', route: '/facture-achat' },
         ]
     },
     {
         section: 'Ventes', items: [
-            { icon: '👥', label: 'Clients', route: '/clients' },
-            { icon: '', label: 'Bon de Commande', route: '/bc-vente' },
-            { icon: '🚛', label: 'Bon de Livraison', route: '/bl-vente' },
+            { icon: '🤝', label: 'Clients', route: '/clients' },
+            { icon: '🛒', label: 'Bon de Commande', route: '/bc-vente' },
+            { icon: '�', label: 'Bon de Livraison', route: '/bl-vente' },
             { icon: '🧾', label: 'Facture Vente', route: '/facture-vente' },
         ]
     },
     {
         section: 'Gestion', items: [
-            { icon: '📦', label: 'Stock', route: '/stock' },
-            { icon: '💰', label: 'Caisse', route: '/caisse' },
-            { icon: '💳', label: 'Règlements', route: '/reglements' },
+            { icon: '�', label: 'Stock', route: '/stock' },
+            { icon: '🏦', label: 'Caisse', route: '/caisse' },
+            { icon: '�', label: 'Règlements', route: '/reglements' },
         ]
     },
     {
         section: 'Configuration', items: [
-            { icon: '⚙️', label: 'Paramètres', route: '/parametres' },
+            { icon: '🔧', label: 'Paramètres', route: '/parametres' },
         ]
     },
 ];
@@ -104,9 +104,39 @@ function registerRoutes() {
     registerRoute('/reglements', renderReglements);
 }
 
+// Theme management
+function initTheme() {
+    const saved = localStorage.getItem('grouperp-theme');
+    const theme = saved || 'light';
+    applyTheme(theme);
+}
+
+function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('grouperp-theme', theme);
+    const icon = document.getElementById('theme-icon');
+    const label = document.getElementById('theme-label');
+    if (icon && label) {
+        if (theme === 'dark') {
+            icon.textContent = '☀️';
+            label.textContent = 'Mode Clair';
+        } else {
+            icon.textContent = '🌙';
+            label.textContent = 'Mode Sombre';
+        }
+    }
+}
+
+function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme') || 'light';
+    applyTheme(current === 'dark' ? 'light' : 'dark');
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+    initTheme();
     buildSidebar();
     registerRoutes();
     initRouter();
+    document.getElementById('theme-toggle')?.addEventListener('click', toggleTheme);
 });

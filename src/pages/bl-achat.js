@@ -49,7 +49,7 @@ export async function renderBlAchat() {
 
         showModal('Nouveau BL Achat', `<form id="bla-form">
       <div class="form-row">
-        <div class="form-group"><label class="form-label">Lot *</label><select class="form-select" name="lotId" id="bla-lot" required><option value="">-- Sélectionner un lot --</option>${lots.map(l => `<option value="${l.id}">${l.numero} (max: ${l.maxProduits})</option>`).join('')}</select></div>
+        <div class="form-group"><label class="form-label">Lot *</label><select class="form-select" name="lotId" id="bla-lot" required><option value="">-- Sélectionner un lot --</option>${lots.map(l => `<option value="${l.id}">${l.numero}</option>`).join('')}</select></div>
         <div class="form-group"><label class="form-label">Fournisseur *</label><select class="form-select" name="fournisseurId" required><option value="">--</option>${fournisseurs.map(f => `<option value="${f.id}">${f.raisonSociale}</option>`).join('')}</select></div>
       </div>
       <div class="form-row">
@@ -83,7 +83,16 @@ export async function renderBlAchat() {
             const alreadyUsedInLot = produits.filter(p => p.lotId === lotId && usedIds.has(p.id)).length;
 
             infoDiv.style.display = 'block';
-            infoDiv.innerHTML = `<strong>Lot ${lot?.numero}:</strong> ${lotProds.length} poteau(x) disponible(s) | ${alreadyUsedInLot} déjà utilisé(s) | Max: ${lot?.maxProduits || 0}`;
+            // Show per-category breakdown
+            const catBreakdown = (lot?.prixParCategorie || []).map(cp => {
+              const catProds = produits.filter(p => p.lotId === lotId && p.categorieId === cp.categorieId);
+              const catUsed = catProds.filter(p => usedIds.has(p.id)).length;
+              const catAvail = catProds.filter(p => !usedIds.has(p.id)).length;
+              const max = cp.maxProduits || 0;
+              const cls = catProds.length >= max ? 'color:var(--danger);font-weight:700' : 'color:var(--success)';
+              return `<span style="${cls};margin-right:8px">${cp.categorieNom}: ${catProds.length}/${max} (${catAvail} dispo)</span>`;
+            }).join('');
+            infoDiv.innerHTML = `<strong>Lot ${lot?.numero}:</strong> ${lotProds.length} disponible(s) | ${alreadyUsedInLot} déjà utilisé(s)<br/><div style="margin-top:4px;font-size:0.82rem">${catBreakdown}</div>`;
 
             if (!lotProds.length) {
                 tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted)">Aucun poteau disponible dans ce lot</td></tr>';
@@ -142,12 +151,27 @@ export async function renderBlAchat() {
             });
             if (!lines.length) { showToast('Sélectionnez au moins un poteau', 'error'); return; }
 
-            // Enforce lot limit
-            const existingInLot = bls.reduce((count, bl) => count + (bl.lignes || []).filter(l => l.lotId === lotId).length, 0);
-            if (existingInLot + lines.length > (lot?.maxProduits || 0)) {
-                showToast(`Limite du lot dépassée ! ${existingInLot} déjà en BL + ${lines.length} sélectionnés > ${lot?.maxProduits} max`, 'error');
-                return;
+            // Enforce per-category lot limits
+            const catCounts = {}; // categorieId -> count of selected
+            lines.forEach(l => { catCounts[l.categorieId] = (catCounts[l.categorieId] || 0) + 1; });
+            // Count existing in BLs per category
+            const existingCatCounts = {};
+            bls.forEach(bl => (bl.lignes || []).filter(l => l.lotId === lotId).forEach(l => {
+                existingCatCounts[l.categorieId] = (existingCatCounts[l.categorieId] || 0) + 1;
+            }));
+            let limitExceeded = false;
+            for (const [catId, count] of Object.entries(catCounts)) {
+                const catLimit = (lot?.prixParCategorie || []).find(cp => cp.categorieId === catId);
+                const max = catLimit?.maxProduits || 0;
+                if (max > 0) {
+                    const existing = existingCatCounts[catId] || 0;
+                    if (existing + count > max) {
+                        showToast(`Limite dépassée pour "${catLimit?.categorieNom}": ${existing} en BL + ${count} sélectionnés > ${max} max`, 'error');
+                        limitExceeded = true; break;
+                    }
+                }
             }
+            if (limitExceeded) return;
 
             const totalHT = lines.reduce((s, l) => s + l.montant, 0);
             const totalTVA = totalHT * tax / 100;
