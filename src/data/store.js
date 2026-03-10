@@ -196,11 +196,13 @@ export async function deleteFactureWithReglements(factureCollection, factureId) 
 // ===== GLOBAL PRODUCT UNIQUENESS =====
 /**
  * Get all product IDs already used in ANY document across achat & vente.
+ * Scans: bl_achat, factures_achat, bc_vente, bl_vente, factures_vente
+ * Returns a Set of produit IDs.
  */
 export async function getUsedProductIds() {
     const collections = [
         'bl_achat', 'factures_achat',
-        'devis_vente', 'bc_vente', 'bl_vente', 'factures_vente'
+        'bc_vente', 'bl_vente', 'factures_vente'
     ];
     const ids = new Set();
     const results = await Promise.all(collections.map(c => getAll(c).catch(() => [])));
@@ -215,44 +217,54 @@ export async function getUsedProductIds() {
     return ids;
 }
 
-// ===== SELLABLE PRODUCTS (for Vente module) =====
+// ===== LOT HELPERS =====
 /**
- * Get product IDs that are sellable:
- * - Have a BL Achat (réceptionné = in stock)
- * - NOT already used in any BL Vente or Devis/BC Vente
- * Returns { inStockIds: Set, soldIds: Set, sellableIds: Set }
+ * Get product IDs used in BL Achat for a specific lot.
+ * Returns count of products already in BL Achat documents for this lot.
  */
-export async function getSellableProductIds() {
-    const [blAchats, blVentes, devisVentes, bcVentes] = await Promise.all([
-        getAll('bl_achat').catch(() => []),
-        getAll('bl_vente').catch(() => []),
-        getAll('devis_vente').catch(() => []),
-        getAll('bc_vente').catch(() => []),
-    ]);
+export async function getLotUsedCount(lotId) {
+    const bls = await getAll('bl_achat').catch(() => []);
+    let count = 0;
+    bls.forEach(bl => {
+        (bl.lignes || []).forEach(l => {
+            if (l.lotId === lotId) count++;
+        });
+    });
+    return count;
+}
 
-    // Products in stock = in a BL Achat with statut 'Réceptionné'
-    const inStockIds = new Set();
-    blAchats.filter(b => b.statut === 'Réceptionné').forEach(bl => {
+/**
+ * Get product IDs that have a validated (Réceptionné) BL Achat.
+ * These are the only products available for Vente.
+ * Returns a Set of produit IDs.
+ */
+export async function getReceivedProductIds() {
+    const bls = await getAll('bl_achat').catch(() => []);
+    const ids = new Set();
+    bls.filter(b => b.statut === 'Réceptionné').forEach(bl => {
         (bl.lignes || []).forEach(l => {
             const pid = l.produitId || l.fromId;
-            if (pid) inStockIds.add(pid);
+            if (pid) ids.add(pid);
         });
     });
+    return ids;
+}
 
-    // Products already used in vente documents
-    const usedInVenteIds = new Set();
-    [...blVentes, ...devisVentes, ...bcVentes].forEach(doc => {
-        (doc.lignes || []).forEach(l => {
-            const pid = l.produitId || l.fromId;
-            if (pid) usedInVenteIds.add(pid);
+/**
+ * Get product IDs already used in any Vente document (bc_vente, bl_vente, factures_vente).
+ * Returns a Set of produit IDs.
+ */
+export async function getVenteUsedProductIds() {
+    const collections = ['bc_vente', 'bl_vente', 'factures_vente'];
+    const ids = new Set();
+    const results = await Promise.all(collections.map(c => getAll(c).catch(() => [])));
+    results.forEach(docs => {
+        docs.forEach(doc => {
+            (doc.lignes || []).forEach(l => {
+                const pid = l.produitId || l.fromId;
+                if (pid) ids.add(pid);
+            });
         });
     });
-
-    // Sellable = in stock AND not used in vente
-    const sellableIds = new Set();
-    inStockIds.forEach(id => {
-        if (!usedInVenteIds.has(id)) sellableIds.add(id);
-    });
-
-    return { inStockIds, usedInVenteIds, sellableIds };
+    return ids;
 }

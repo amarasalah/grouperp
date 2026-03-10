@@ -1,15 +1,9 @@
 // Router - Hash-based SPA routing
-import { hasMenuAccess, isAuthenticated } from './data/auth.js';
-
 const routes = {};
-const routePerms = {};
 let currentRoute = null;
-let routerInitialized = false;
-let handleRoute = null;
 
-export function registerRoute(path, handler, permKey) {
+export function registerRoute(path, handler) {
     routes[path] = handler;
-    if (permKey) routePerms[path] = permKey;
 }
 
 export function navigateTo(path) {
@@ -17,7 +11,7 @@ export function navigateTo(path) {
 }
 
 export function initRouter() {
-    handleRoute = () => {
+    const handleRoute = () => {
         const hash = window.location.hash.slice(1) || '/';
         const path = hash.split('?')[0];
 
@@ -27,28 +21,14 @@ export function initRouter() {
         });
 
         if (routes[path]) {
-            // Check permission if a permKey is set for this route
-            const permKey = routePerms[path];
-            if (permKey && isAuthenticated() && !hasMenuAccess(permKey)) {
-                const content = document.getElementById('page-content');
-                if (content) {
-                    content.innerHTML = '<div class="empty-state"><div class="icon">🔒</div><div class="title">Accès refusé</div><div class="desc">Vous n\'avez pas les permissions pour accéder à cette page.</div></div>';
-                }
-                return;
-            }
             currentRoute = path;
             const content = document.getElementById('page-content');
-            if (content) {
-                content.innerHTML = '<div class="spinner"></div>';
-                routes[path]();
-            }
+            content.innerHTML = '<div class="spinner"></div>';
+            routes[path]();
         }
     };
 
-    if (!routerInitialized) {
-        window.addEventListener('hashchange', handleRoute);
-        routerInitialized = true;
-    }
+    window.addEventListener('hashchange', handleRoute);
     handleRoute();
 }
 

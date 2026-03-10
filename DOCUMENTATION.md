@@ -2,7 +2,7 @@
 
 ## 1. Overview & Tech Stack
 
-**GroupERP** is a single-page application (SPA) for an Algerian concrete electric pole manufacturing company ("Groupement des Poteaux Béton"). It manages the full **procurement-to-payment** and **order-to-cash** cycle.
+**GroupERP** is a single-page application (SPA) for an Algerian concrete electric pole manufacturing company ("Groupement des Poteaux Béton"). It manages the full **procurement-to-payment** and **order-to-cash** cycle with a **lot-based pricing system**.
 
 | Component | Technology |
 |-----------|------------|
@@ -30,39 +30,45 @@ Each "class" is a Firestore collection. Fields shown are the document properties
 │ *Prefix / *Seq (x8)     │
 └──────────────────────────┘
 
-┌───────────────────┐         ┌───────────────────────┐
-│    categories     │         │    fournisseurs        │
-├───────────────────┤         ├───────────────────────┤
-│ id                │         │ id                    │
-│ nom               │◄─────┐  │ raisonSociale         │
-│ prefix            │      │  │ telephone             │
-│ description       │      │  │ matriculeFiscale      │
-└───────────────────┘      │  │ rib                   │
-                           │  │ adresse / description │
-┌──────────────────────────┤  └──────────┬────────────┘
-│       produits           │             │
-├──────────────────────────┤             │
-│ id                       │             │
-│ reference (manual ID)    │             │
-│ designation              │             │
-│ categorieId ─────────────┘             │
-│ categorieNom                           │
-│ fournisseurId ─────────────────────────┘
+┌───────────────────┐         ┌───────────────────────────┐
+│    categories     │         │          lots              │
+├───────────────────┤         ├───────────────────────────┤
+│ id                │◄────┐   │ id                        │
+│ nom               │     │   │ numero                    │
+│ prefix            │     │   │ date                      │
+│ description       │     │   │ maxProduits               │
+└───────────────────┘     │   │ prixParCategorie[]: {     │
+                          │   │   categorieId, categorieNom│
+                          │   │   prixAchat, prixVente    │
+                          │   │ }                         │
+                          │   │ note                      │
+                          │   └────────────┬──────────────┘
+                          │                │
+┌─────────────────────────┤   ┌────────────┘
+│       produits          │   │
+├─────────────────────────┤   │  ┌───────────────────────┐
+│ id                      │   │  │    fournisseurs        │
+│ reference (manual ID)   │   │  ├───────────────────────┤
+│ designation             │   │  │ id                    │
+│ categorieId ────────────┘   │  │ raisonSociale         │
+│ categorieNom                │  │ telephone             │
+│ lotId ──────────────────────┘  │ matriculeFiscale      │
+│ lotNumero                      │ rib / adresse         │
+│ fournisseurId ─────────────────┘
 │ fournisseurNom
-│ prixAchat / prixVente
+│ prixAchat / prixVente  (from lot)
 │ unite / stock / numero
-└──────────┬───────────────┘
+└──────────┬─────────────┘
 
            │ (referenced in document lines)
            ▼
 ┌──────────────────────────────────────────────────┐
-│  DOCUMENT COLLECTIONS (8 total)                  │
+│  DOCUMENT COLLECTIONS (5 active)                 │
 │  ─────────────────────────────────────────       │
 │  Achat side:                Vente side:          │
-│   • devis_achat              • devis_vente       │
-│   • bc_achat                 • bc_vente          │
-│   • bl_achat                 • bl_vente          │
-│   • factures_achat           • factures_vente    │
+│   • bl_achat (+ lotId)       • bc_vente          │
+│   • factures_achat           • bl_vente          │
+│                              • factures_vente    │
 ├──────────────────────────────────────────────────┤
 │ Common fields per document:                      │
 │   id, numero, date, statut/regle                 │
@@ -70,11 +76,12 @@ Each "class" is a Firestore collection. Fields shown are the document properties
 │   lignes[]: {                                    │
 │     categorieId, categorieNom,                   │
 │     produitId, produitRef, designation,           │
+│     lotId, lotNumero,                            │
 │     quantite (always 1), prixUnitaire, montant   │
 │   }                                              │
 │   taxRate, totalHT, totalTVA, totalTTC, note     │
-│   (factures also: blRefs[], regle: boolean)      │
-│   (bc/bl: devisRef/bcRef traceability)           │
+│   (factures: blRefs[], regle: boolean)           │
+│   (bl_vente: bcRef traceability)                 │
 └──────────────────────────────────────────────────┘
 
 ┌────────────────────┐     ┌─────────────────────┐
@@ -93,7 +100,7 @@ Each "class" is a Firestore collection. Fields shown are the document properties
 │    reglements      │     │ montant              │
 ├────────────────────┤     │ type (entree/sortie) │
 │ id                 │     │ description          │
-│ factureId ────────►│     │ reference            │
+│ factureId          │     │ reference            │
 │ montant            │     │ date                 │
 │ date               │     └─────────────────────┘
 │ modePaiement       │
@@ -110,26 +117,31 @@ Each "class" is a Firestore collection. Fields shown are the document properties
 ## 3. Data Relationships (How Data is Linked)
 
 ```
-categories  ──1:N──►  produits  ──1:N──►  document.lignes[]
+categories  ──1:N──►  lots.prixParCategorie[]  (prices per category per lot)
+lots        ──1:N──►  produits                 (products belong to a lot)
+categories  ──1:N──►  produits
 fournisseurs──1:N──►  produits
-fournisseurs──1:N──►  devis_achat / bc_achat / bl_achat / factures_achat
-clients     ──1:N──►  devis_vente / bc_vente / bl_vente / factures_vente
+fournisseurs──1:N──►  bl_achat / factures_achat
+clients     ──1:N──►  bc_vente / bl_vente / factures_vente
 
-devis_achat  ──converts──►  bc_achat   (copies lignes, stores devisRef)
-bc_achat     ──converts──►  bl_achat   (copies lignes, stores bcRef)
+ACHAT FLOW (simplified):
+bl_achat (select lot → pick products) ──validate──► stock entree
 bl_achat     ──selected──►  factures_achat  (cherry-picks lines from BLs, stores blRefs[])
 
-devis_vente  ──converts──►  bc_vente   (same pattern)
-bc_vente     ──converts──►  bl_vente
+VENTE FLOW:
+bc_vente (only products with validated BL Achat) ──converts──► bl_vente
+bl_vente     ──validate──► stock sortie
 bl_vente     ──selected──►  factures_vente
 
 factures_*   ──1:N──►  reglements  (via factureId)
 reglements   ──auto──►  caisse      (creates entry/exit movement)
-bl_achat (validate)  ──auto──►  stock_mouvements + produits.stock (entree +1)
-bl_vente  (validate) ──auto──►  stock_mouvements + produits.stock (sortie −1)
 ```
 
-**Key constraint**: Each `produit` (pole) can only appear in **one document globally** across all 8 document collections. This is enforced by `getUsedProductIds()` which scans all collections.
+**Key constraints**:
+- Each `produit` can only be used **once** across achat AND vente documents
+- In **Vente**, only products with a **validated BL Achat** (Réceptionné) can be selected
+- Each **Lot** defines per-category prices (achat + vente) and a **max product limit**
+- Products inherit their prices from the lot they belong to
 
 ---
 
@@ -143,7 +155,10 @@ bl_vente  (validate) ──auto──►  stock_mouvements + produits.stock (sor
   │      │──────────────┼─►│ Manage Categories (CRUD)       │  │
   │      │              │  └────────────────────────────────┘  │
   │      │              │  ┌────────────────────────────────┐  │
-  │      │──────────────┼─►│ Manage Products / Poles (CRUD) │  │
+  │      │──────────────┼─►│ Manage Lots (prices/limits)    │  │
+  │      │              │  └────────────────────────────────┘  │
+  │      │              │  ┌────────────────────────────────┐  │
+  │      │──────────────┼─►│ Manage Products (in lots)      │  │
   │      │              │  └────────────────────────────────┘  │
   │      │              │  ┌────────────────────────────────┐  │
   │      │──────────────┼─►│ Manage Suppliers (CRUD + View) │  │
@@ -152,12 +167,10 @@ bl_vente  (validate) ──auto──►  stock_mouvements + produits.stock (sor
   │      │──────────────┼─►│ Manage Clients (CRUD)          │  │
   │ User │              │  └────────────────────────────────┘  │
   │      │              │  ┌────────────────────────────────┐  │
-  │      │──────────────┼─►│ Purchase Cycle:                │  │
-  │      │              │  │  Devis → BC → BL → Facture     │  │
+  │      │──────────────┼─►│ Purchase: BL Achat → Facture   │  │
   │      │              │  └────────────────────────────────┘  │
   │      │              │  ┌────────────────────────────────┐  │
-  │      │──────────────┼─►│ Sales Cycle:                   │  │
-  │      │              │  │  Devis → BC → BL → Facture     │  │
+  │      │──────────────┼─►│ Sales: BC → BL → Facture       │  │
   │      │              │  └────────────────────────────────┘  │
   │      │              │  ┌────────────────────────────────┐  │
   │      │──────────────┼─►│ View/Manage Stock              │  │
@@ -182,11 +195,12 @@ bl_vente  (validate) ──auto──►  stock_mouvements + produits.stock (sor
 | Use Case | Description |
 |----------|-------------|
 | **Manage Categories** | Create/Edit/Delete pole categories (e.g., PB9, PB12) |
-| **Manage Products** | Create poles with manual ID, link to category + supplier, set buy/sell prices; select poles to bulk-create a Devis Achat |
-| **Manage Suppliers** | CRUD + account view (all devis, BC, BL, factures, payments, balance) |
+| **Manage Lots** | Create lots with per-category prices (achat + vente) and max product limits |
+| **Manage Products** | Create poles with manual ID, must select a lot (prices auto-filled from lot), link to category + supplier |
+| **Manage Suppliers** | CRUD + account view (BL, factures, payments, balance) |
 | **Manage Clients** | CRUD with fiscal info |
-| **Purchase Cycle** | Devis Achat → convert to BC Achat → convert to BL Achat → validate (stock IN) → create Facture Achat from BLs |
-| **Sales Cycle** | Devis Vente → convert to BC Vente → convert to BL Vente → validate (stock OUT) → create Facture Vente from BLs |
+| **Purchase Cycle** | BL Achat (select lot → pick products) → validate (stock IN) → Facture Achat from BLs |
+| **Sales Cycle** | BC Vente (only received products) → convert to BL Vente → validate (stock OUT) → Facture Vente from BLs |
 | **Stock** | View stock per category and per product (entries vs exits) |
 | **Caisse** | Manual cash journal entries + automatic entries from payments |
 | **Règlements** | Pay invoices (partial/full), auto-mark as paid, auto-feed caisse |
@@ -197,28 +211,17 @@ bl_vente  (validate) ──auto──►  stock_mouvements + produits.stock (sor
 
 ## 5. Sequence Diagrams
 
-### 5.1 Purchase Workflow (Achat)
+### 5.1 Purchase Workflow (Achat) — Simplified with Lots
 
 ```
 User              UI/Pages           store.js          Firestore
  │                   │                  │                  │
- │──Create Devis────►│                  │                  │
+ │──Create BL Achat─►│                  │                  │
+ │  (select lot)     │──getUsedProductIds()─────────────────►│
+ │  (pick products)  │  (filter by lot, exclude used)        │
  │                   │──getNextNumber()─►│──get/set counter─►│
- │                   │──add('devis_achat')────────────────►│
- │                   │◄─── docId ──────────────────────────│
- │◄──Toast "Créé"────│                  │                  │
- │                   │                  │                  │
- │──Convert to BC───►│                  │                  │
- │                   │──getNextNumber()─►│                  │
- │                   │──add('bc_achat', {lignes, devisRef})──►│
- │                   │──update('devis_achat', {statut:'Validé'})►│
- │◄──Toast "BC créé" │                  │                  │
- │                   │                  │                  │
- │──Convert BC→BL───►│                  │                  │
- │                   │──getNextNumber()─►│                  │
- │                   │──add('bl_achat', {lignes, bcRef})──────►│
- │                   │──update('bc_achat', {statut:'Livré'})──►│
- │◄──Toast "BL créé" │                  │                  │
+ │                   │──add('bl_achat', {lotId,lignes})────►│
+ │◄──Toast "BL créé"─│                  │                  │
  │                   │                  │                  │
  │──Validate BL─────►│                  │                  │
  │                   │──FOR EACH ligne:  │                  │
@@ -232,21 +235,25 @@ User              UI/Pages           store.js          Firestore
  │                   │──Select BLs (Réceptionné)            │
  │                   │──Filter out already-invoiced produits │
  │                   │──User picks lines + prices           │
- │                   │──getNextNumber()─►│                  │
- │                   │──add('factures_achat', {blRefs, lignes})►│
+ │                   │──add('factures_achat', {blRefs})────►│
  │◄──Toast "Facture créée"│             │                  │
 ```
 
-### 5.2 Sales Workflow (Vente)
+### 5.2 Sales Workflow (Vente) — Only Received Products
 
 ```
 User              UI/Pages           store.js          Firestore
  │                   │                  │                  │
- │──Create Devis V──►│──add('devis_vente', {clientId,lignes})──►│
- │──Convert to BC V─►│──add('bc_vente') + update devis statut──►│
- │──Convert BC→BL V─►│──add('bl_vente') + update bc statut─────►│
- │──Validate BL V───►│──FOR EACH ligne: updateStock(sortie)────►│
- │──Create Facture V►│──add('factures_vente', {blRefs})────────►│
+ │──Create BC Vente─►│──getReceivedProductIds()──────────────►│
+ │                   │──getVenteUsedProductIds()──────────────►│
+ │  (only received   │  (available = received − venteUsed)    │
+ │   & unused prods) │                  │                  │
+ │  (pick products)  │──add('bc_vente', {clientId,lignes})──►│
+ │◄──Toast "BC créé"─│                  │                  │
+ │                   │                  │                  │
+ │──Convert BC→BL V─►│──add('bl_vente') + update bc statut──►│
+ │──Validate BL V───►│──FOR EACH ligne: updateStock(sortie)──►│
+ │──Create Facture V►│──add('factures_vente', {blRefs})──────►│
 ```
 
 ### 5.3 Payment (Règlement) Workflow
@@ -274,53 +281,57 @@ User              Reglements Page     store.js          Firestore
 ```
                     ┌─────────────────┐
                     │   Setup Phase   │
-                    │  (one-time)     │
                     └────────┬────────┘
                              │
-                 ┌───────────┼───────────┐
-                 ▼           ▼           ▼
-          ┌──────────┐ ┌──────────┐ ┌──────────┐
-          │ Create   │ │ Create   │ │ Create   │
-          │Categories│ │Suppliers │ │ Clients  │
-          └────┬─────┘ └────┬─────┘ └────┬─────┘
-               │            │            │
-               └─────┬──────┘            │
-                     ▼                   │
-              ┌──────────────┐           │
-              │Create Products│           │
-              │(link Cat+Four)│           │
-              └──────┬───────┘           │
-                     │                   │
-         ┌───────────┴───────────┐       │
-         ▼                       ▼       │
-  ┌──────────────┐       ┌──────────────┐│
-  │ PURCHASE     │       │ SALES        ││
-  │ CYCLE        │       │ CYCLE        ││
-  ├──────────────┤       ├──────────────┤│
-  │1.Devis Achat │       │1.Devis Vente ││
-  │   ↓ convert  │       │   ↓ convert  ││
-  │2.BC Achat    │       │2.BC Vente    ││
-  │   ↓ convert  │       │   ↓ convert  ││
-  │3.BL Achat    │       │3.BL Vente    ││
-  │   ↓ validate │       │   ↓ validate ││
-  │  [Stock +1]  │       │  [Stock -1]  ││
-  │   ↓          │       │   ↓          ││
-  │4.Facture     │       │4.Facture     ││
-  │   Achat      │       │   Vente      ││
-  └──────┬───────┘       └──────┬───────┘│
-         │                       │       │
-         └───────────┬───────────┘       │
-                     ▼                   │
-              ┌──────────────┐           │
-              │  Règlements  │◄──────────┘
-              │  (Payments)  │
-              └──────┬───────┘
-                     │ auto
-                     ▼
-              ┌──────────────┐
-              │    Caisse    │
-              │ (Cash Book)  │
-              └──────────────┘
+          ┌──────────────────┼──────────────────┐
+          ▼                  ▼                  ▼
+   ┌──────────┐      ┌──────────────┐    ┌──────────┐
+   │ Create   │      │   Create     │    │ Create   │
+   │Categories│      │  Suppliers   │    │ Clients  │
+   └────┬─────┘      └──────┬───────┘    └────┬─────┘
+        │                   │                 │
+        ▼                   │                 │
+ ┌──────────────┐           │                 │
+ │ Create Lots  │           │                 │
+ │(prices/limit)│           │                 │
+ └──────┬───────┘           │                 │
+        │                   │                 │
+        ▼                   │                 │
+ ┌──────────────┐           │                 │
+ │Create Products│◄─────────┘                 │
+ │(in lot+cat+  │                             │
+ │ fournisseur) │                             │
+ └──────┬───────┘                             │
+        │                                     │
+  ┌─────┴──────────────┐                      │
+  ▼                    ▼                      │
+┌────────────┐  ┌──────────────┐              │
+│ ACHAT      │  │ VENTE        │              │
+├────────────┤  ├──────────────┤              │
+│1.BL Achat  │  │1.BC Vente    │◄─────────────┘
+│  (lot+prods│  │ (received    │
+│   select)  │  │  prods only) │
+│  ↓ validate│  │  ↓ convert   │
+│ [Stock +1] │  │2.BL Vente    │
+│  ↓         │  │  ↓ validate  │
+│2.Facture   │  │ [Stock -1]   │
+│  Achat     │  │  ↓           │
+│            │  │3.Facture     │
+│            │  │  Vente       │
+└─────┬──────┘  └──────┬───────┘
+      │                │
+      └────────┬───────┘
+               ▼
+        ┌──────────────┐
+        │  Règlements  │
+        │  (Payments)  │
+        └──────┬───────┘
+               │ auto
+               ▼
+        ┌──────────────┐
+        │    Caisse    │
+        │ (Cash Book)  │
+        └──────────────┘
 ```
 
 ---
@@ -329,12 +340,15 @@ User              Reglements Page     store.js          Firestore
 
 | Rule | Description |
 |------|-------------|
-| **Global product uniqueness** | A pole (produit) can only be used in **one** document across all 8 document types. `getUsedProductIds()` scans all collections to enforce this. |
+| **Global product uniqueness** | A pole (produit) can only be used **once** across both achat AND vente documents. `getUsedProductIds()` scans all active collections. |
+| **Lot-based pricing** | Each lot defines per-category prices (achat + vente). Products inherit prices from their lot. |
+| **Lot product limit** | Each lot has a `maxProduits` limit. Cannot create more products than the limit, and BL Achat enforces this limit. |
+| **Vente requires BL Achat** | In Vente (BC Vente), only products that have a **validated BL Achat** (Réceptionné) can be selected. |
 | **Quantity is always 1** | Each pole is an individual unit (qty=1 per line). This is a pole-tracking system, not a bulk-goods system. |
-| **Document chain traceability** | Each document stores a reference to its predecessor: BC stores `devisRef`, BL stores `bcRef`, Facture stores `blRefs[]` |
+| **Document chain traceability** | BL Vente stores `bcRef`, Factures store `blRefs[]`. BL Achat stores `lotId`. |
 | **Stock is event-driven** | Stock is only updated when a BL is **validated** (Réceptionné for achat / Livré for vente). |
 | **Cascading delete** | Deleting a facture also deletes all associated règlements. |
-| **Auto-numbering** | Documents use prefix + month-year + sequential counter (e.g., `DA-03-26-001`). |
+| **Auto-numbering** | Documents use prefix + month-year + sequential counter (e.g., `BLA-03-26-001`). |
 | **Payment → Caisse auto-link** | Every règlement automatically creates a caisse movement (entree for vente payments, sortie for achat payments). |
 | **Full payment detection** | When sum of règlements >= totalTTC, the facture is auto-marked as `regle: true`. |
 
@@ -347,15 +361,13 @@ User              Reglements Page     store.js          Firestore
 | `settings` | Company config, tax, prefixes | — |
 | `counters` | Auto-numbering sequences | — |
 | `categories` | Pole categories | — |
-| `produits` | Individual poles | `categorieId`, `fournisseurId` |
+| `lots` | Lot definitions with per-category pricing | `prixParCategorie[].categorieId` |
+| `produits` | Individual poles | `categorieId`, `fournisseurId`, `lotId` |
 | `fournisseurs` | Suppliers | — |
 | `clients` | Customers | — |
-| `devis_achat` | Purchase quotes | `fournisseurId`, `lignes[].produitId` |
-| `bc_achat` | Purchase orders | `fournisseurId`, `devisRef` |
-| `bl_achat` | Purchase delivery notes | `fournisseurId`, `bcRef` |
+| `bl_achat` | Purchase delivery notes | `fournisseurId`, `lotId`, `lignes[].produitId` |
 | `factures_achat` | Purchase invoices | `fournisseurId`, `blRefs[]` |
-| `devis_vente` | Sales quotes | `clientId`, `lignes[].produitId` |
-| `bc_vente` | Sales orders | `clientId`, `devisRef` |
+| `bc_vente` | Sales orders | `clientId`, `lignes[].produitId` |
 | `bl_vente` | Sales delivery notes | `clientId`, `bcRef` |
 | `factures_vente` | Sales invoices | `clientId`, `blRefs[]` |
 | `stock_mouvements` | Stock movement log | `produitId` |
@@ -368,13 +380,13 @@ User              Reglements Page     store.js          Firestore
 
 ```
 index.html (shell: sidebar + main + modal + toast)
-  └── src/main.js (entry: builds sidebar, registers 17 routes, inits router)
+  └── src/main.js (entry: builds sidebar, registers 14 routes, inits router)
         ├── src/router.js          (hash-based SPA router)
         ├── src/data/firebase.js   (Firebase init)
-        ├── src/data/store.js      (generic CRUD, settings, stock, caisse, payment helpers)
+        ├── src/data/store.js      (generic CRUD, settings, stock, caisse, lot helpers)
         ├── src/utils/helpers.js   (formatters, modals, toasts, currency-to-words)
         ├── src/utils/pagination.js(filtering, search, pagination)
-        └── src/pages/*.js         (17 page modules, each self-contained render function)
+        └── src/pages/*.js         (14 active page modules)
 ```
 
 The application follows a **page-module pattern** where each page exports a single `render*()` async function that owns its own state, fetches data from Firestore, renders HTML, and wires DOM events. There is **no global state management**—each page re-fetches data from Firestore on load.
@@ -384,28 +396,22 @@ The application follows a **page-module pattern** where each page exports a sing
 ## 10. File Structure
 
 ```
-c:\Users\DELL\Desktop\APPLICATIONS\GroupERP/
-├── .git/
-├── dist/
-├── node_modules/
-├── public/
+GroupERP/
 ├── src/
 │   ├── data/
 │   │   ├── firebase.js          # Firebase configuration
-│   │   └── store.js             # Data access layer, CRUD, helpers
+│   │   └── store.js             # Data access layer, CRUD, lot/stock/caisse helpers
 │   ├── pages/
 │   │   ├── dashboard.js         # Dashboard/KPIs
-│   │   ├── categories.js      # Category management
-│   │   ├── produits.js          # Product/pole management
+│   │   ├── categories.js        # Category management
+│   │   ├── lots.js              # Lot management (per-category pricing + limits)
+│   │   ├── produits.js          # Product/pole management (lot-linked)
 │   │   ├── fournisseurs.js      # Supplier management
 │   │   ├── clients.js           # Client management
-│   │   ├── devis-achat.js       # Purchase quotes
-│   │   ├── bc-achat.js          # Purchase orders
-│   │   ├── bl-achat.js          # Purchase delivery notes
+│   │   ├── bl-achat.js          # Purchase delivery notes (lot-based)
 │   │   ├── facture-achat.js     # Purchase invoices
-│   │   ├── devis-vente.js       # Sales quotes
-│   │   ├── bc-vente.js          # Sales orders
-│   │   ├── bl-vente.js          # Sales delivery notes
+│   │   ├── bc-vente.js          # Sales orders (received products only)
+│   │   ├── bl-vente.js          # Sales delivery notes (from BC conversion)
 │   │   ├── facture-vente.js     # Sales invoices
 │   │   ├── stock.js             # Stock management
 │   │   ├── caisse.js            # Cash journal
@@ -420,5 +426,5 @@ c:\Users\DELL\Desktop\APPLICATIONS\GroupERP/
 │   └── router.js                # SPA router
 ├── index.html                   # Main HTML shell
 ├── package.json
-└── README.md
+└── DOCUMENTATION.md             # This file
 ```

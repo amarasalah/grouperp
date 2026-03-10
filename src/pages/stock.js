@@ -6,10 +6,10 @@ import { paginate } from '../utils/pagination.js';
 export async function renderStock() {
   const content = document.getElementById('page-content');
   const produits = await getAll('produits').catch(() => []);
-  const types = await getAll('types').catch(() => []);
+  const categories = await getAll('categories').catch(() => []);
   const blAchats = await getAll('bl_achat').catch(() => []);
   const blVentes = await getAll('bl_vente').catch(() => []);
-  let catPage = 1, prodPage = 1, catSearch = '', prodSearch = '', prodTypeFilter = '';
+  let catPage = 1, prodPage = 1, catSearch = '', prodSearch = '', prodCatFilter = '';
 
   // Build per-product stock from BLs
   const prodStockMap = {}; // produitId -> { entrees, sorties }
@@ -28,13 +28,13 @@ export async function renderStock() {
 
   // Build per-category stock
   const catStockMap = {};
-  types.forEach(c => { catStockMap[c.id] = { ...c, total: 0, entrees: 0, sorties: 0, enStock: 0 }; });
-  produits.forEach(p => { if (catStockMap[p.typeId]) catStockMap[p.typeId].total++; });
+  categories.forEach(c => { catStockMap[c.id] = { ...c, total: 0, entrees: 0, sorties: 0, enStock: 0 }; });
+  produits.forEach(p => { if (catStockMap[p.categorieId]) catStockMap[p.categorieId].total++; });
   Object.entries(prodStockMap).forEach(([pid, s]) => {
     const p = produits.find(x => x.id === pid);
-    if (p && catStockMap[p.typeId]) {
-      catStockMap[p.typeId].entrees += s.entrees;
-      catStockMap[p.typeId].sorties += s.sorties;
+    if (p && catStockMap[p.categorieId]) {
+      catStockMap[p.categorieId].entrees += s.entrees;
+      catStockMap[p.categorieId].sorties += s.sorties;
     }
   });
   Object.values(catStockMap).forEach(c => { c.enStock = c.entrees - c.sorties; });
@@ -44,8 +44,8 @@ export async function renderStock() {
   const inStockProducts = produits.map(p => {
     const s = prodStockMap[p.id] || { entrees: 0, sorties: 0 };
     const stock = s.entrees - s.sorties;
-    const tp = types.find(t => t.id === p.typeId);
-    return { ...p, entrees: s.entrees, sorties: s.sorties, stock, typeNom: tp?.nom || '-' };
+    const cat = categories.find(c => c.id === p.categorieId);
+    return { ...p, entrees: s.entrees, sorties: s.sorties, stock, categorieNom: cat?.nom || '-' };
   }).filter(p => p.stock > 0);
 
   const totalPoteaux = produits.length;
@@ -62,7 +62,7 @@ export async function renderStock() {
     // Filter in-stock products
     let filteredProds = [...inStockProducts];
     if (prodSearch) { const q = prodSearch.toLowerCase(); filteredProds = filteredProds.filter(p => (p.reference || '').toLowerCase().includes(q) || (p.designation || '').toLowerCase().includes(q)); }
-    if (prodTypeFilter) filteredProds = filteredProds.filter(p => p.typeId === prodTypeFilter);
+    if (prodCatFilter) filteredProds = filteredProds.filter(p => p.categorieId === prodCatFilter);
     const pagedProds = paginate(filteredProds, prodPage, 'prod-pagination', p => { prodPage = p; render(); });
 
     content.innerHTML = `
@@ -96,10 +96,10 @@ export async function renderStock() {
       </div>
       <div class="filter-bar" style="margin:12px 0;display:flex;gap:12px;flex-wrap:wrap">
         <input type="text" class="filter-search" id="search-prod" placeholder="Rechercher poteau..." value="${prodSearch}" style="flex:1;min-width:200px"/>
-        <select class="form-select" id="filter-prod-cat" style="max-width:250px"><option value="">Tous types</option>${types.map(t => `<option value="${t.id}" ${prodTypeFilter === t.id ? 'selected' : ''}>${t.nom}</option>`).join('')}</select>
+        <select class="form-select" id="filter-prod-cat" style="max-width:250px"><option value="">Toutes catégories</option>${categories.map(c => `<option value="${c.id}" ${prodCatFilter === c.id ? 'selected' : ''}>${c.nom}</option>`).join('')}</select>
       </div>
       ${pagedProds.length ? `<div class="table-wrapper"><table class="data-table" id="stock-products-table"><thead><tr><th>Référence</th><th>Catégorie</th><th>Entrée</th><th>Sortie</th><th>En Stock</th></tr></thead><tbody>
-        ${pagedProds.map(p => `<tr><td><strong style="color:var(--accent)">${p.reference || ''}</strong></td><td>${p.typeNom}</td>
+        ${pagedProds.map(p => `<tr><td><strong style="color:var(--accent)">${p.reference || ''}</strong></td><td>${p.categorieNom}</td>
           <td><span class="badge badge-success">${p.entrees}</span></td>
           <td><span class="badge badge-danger">${p.sorties}</span></td>
           <td><span class="badge ${p.stock > 0 ? 'badge-warning' : 'badge-danger'}" style="font-weight:700">${p.stock}</span></td></tr>`).join('')}
@@ -113,7 +113,7 @@ export async function renderStock() {
 
     document.getElementById('search-cat')?.addEventListener('input', e => { catSearch = e.target.value; catPage = 1; render(); });
     document.getElementById('search-prod')?.addEventListener('input', e => { prodSearch = e.target.value; prodPage = 1; render(); });
-    document.getElementById('filter-prod-cat')?.addEventListener('change', e => { prodTypeFilter = e.target.value; prodPage = 1; render(); });
+    document.getElementById('filter-prod-cat')?.addEventListener('change', e => { prodCatFilter = e.target.value; prodPage = 1; render(); });
 
     document.getElementById('print-stock-btn')?.addEventListener('click', () => {
       // Print filtered in-stock products
@@ -128,7 +128,7 @@ export async function renderStock() {
         <h1>📦 Poteaux en Stock — ${new Date().toLocaleDateString('fr-FR')}</h1>
         <p>${printProds.length} poteau(x)</p>
         <table><thead><tr><th>Référence</th><th>Catégorie</th><th>Entrée</th><th>Sortie</th><th>En Stock</th></tr></thead><tbody>
-        ${printProds.map(p => `<tr><td>${p.reference || ''}</td><td>${p.typeNom}</td><td>${p.entrees}</td><td>${p.sorties}</td><td><strong>${p.stock}</strong></td></tr>`).join('')}
+        ${printProds.map(p => `<tr><td>${p.reference || ''}</td><td>${p.categorieNom}</td><td>${p.entrees}</td><td>${p.sorties}</td><td><strong>${p.stock}</strong></td></tr>`).join('')}
         </tbody></table>
       </body></html>`);
       printWin.document.close(); printWin.focus(); setTimeout(() => printWin.print(), 300);

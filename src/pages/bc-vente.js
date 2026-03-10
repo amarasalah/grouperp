@@ -1,5 +1,5 @@
-// BC Vente Page - individual product, global uniqueness
-import { getAll, add, update, remove, getSettings, getNextNumber, getSellableProductIds } from '../data/store.js';
+// BC Vente Page - only products with validated BL Achat, prices from lot vente
+import { getAll, add, update, remove, getSettings, getNextNumber, getReceivedProductIds, getVenteUsedProductIds } from '../data/store.js';
 import { showToast, showModal, hideModal, confirmDialog, formatCurrency, formatDate, todayISO, printDocumentHeader } from '../utils/helpers.js';
 import { paginate, filterBarHTML, applyFilters, wireFilters } from '../utils/pagination.js';
 
@@ -8,20 +8,20 @@ export async function renderBcVente() {
   let bcs = await getAll('bc_vente').catch(() => []);
   const clients = await getAll('clients').catch(() => []);
   const produits = await getAll('produits').catch(() => []);
-  const types = await getAll('types').catch(() => []);
+  const lots = await getAll('lots').catch(() => []);
   const settings = await getSettings();
   let currentPage = 1, currentFilters = {};
 
   function render(filters = currentFilters, page = currentPage) {
     currentFilters = filters; currentPage = page;
-    const filtered = applyFilters(bcs, { ...filters, searchFields: ['numero', 'clientNom', 'devisRef'], statusField: 'statut' });
+    const filtered = applyFilters(bcs, { ...filters, searchFields: ['numero', 'clientNom'], statusField: 'statut' });
     const paged = paginate(filtered, page, 'pagination-controls', p => render(filters, p));
     content.innerHTML = `
-      <div class="page-header"><div><h1 class="page-title">📦 Bon de Commande Vente</h1><p class="page-subtitle">Commandes clients</p></div>
+      <div class="page-header"><div><h1 class="page-title">📦 Bon de Commande Vente</h1><p class="page-subtitle">Commandes clients — seuls les poteaux avec BL Achat validé</p></div>
         <button class="btn btn-primary" id="add-bcv-btn">+ Nouveau BC</button></div>
       ${filterBarHTML({ showStatus: true, statusOptions: ['En cours', 'Livré', 'Annulé'] })}
-      ${paged.length ? `<div class="table-wrapper"><table class="data-table"><thead><tr><th>N° BC</th><th>Date</th><th>Client</th><th>Réf. Devis</th><th>Nb Poteaux</th><th>Total TTC</th><th>Statut</th><th>Actions</th></tr></thead><tbody>
-        ${paged.map(b => `<tr><td><strong style="color:var(--accent)">${b.numero || ''}</strong></td><td>${formatDate(b.date)}</td><td>${b.clientNom || '-'}</td><td>${b.devisRef || '-'}</td><td>${(b.lignes || []).length}</td><td><strong>${formatCurrency(b.totalTTC)}</strong></td>
+      ${paged.length ? `<div class="table-wrapper"><table class="data-table"><thead><tr><th>N° BC</th><th>Date</th><th>Client</th><th>Nb Poteaux</th><th>Total HT</th><th>Total TTC</th><th>Statut</th><th>Actions</th></tr></thead><tbody>
+        ${paged.map(b => `<tr><td><strong style="color:var(--accent)">${b.numero || ''}</strong></td><td>${formatDate(b.date)}</td><td>${b.clientNom || '-'}</td><td>${(b.lignes || []).length}</td><td>${formatCurrency(b.totalHT)}</td><td><strong>${formatCurrency(b.totalTTC)}</strong></td>
           <td><span class="badge ${b.statut === 'Livré' ? 'badge-success' : b.statut === 'Annulé' ? 'badge-danger' : 'badge-warning'}">${b.statut || 'En cours'}</span></td>
           <td class="actions"><button class="btn btn-sm btn-secondary view-bcv" data-id="${b.id}">👁️</button>${b.statut !== 'Livré' ? `<button class="btn btn-sm btn-success create-bl" data-id="${b.id}" title="→ BL">🚛</button>` : ''}<button class="btn btn-sm btn-danger delete-bcv" data-id="${b.id}">🗑️</button></td></tr>`).join('')}
       </tbody></table></div>` : `<div class="empty-state"><div class="icon">📦</div><div class="title">Aucun BC vente</div></div>`}
@@ -41,83 +41,86 @@ export async function renderBcVente() {
     document.querySelectorAll('.delete-bcv').forEach(b => b.onclick = async () => { if (await confirmDialog('Supprimer ?')) { await remove('bc_vente', b.dataset.id); bcs = bcs.filter(x => x.id !== b.dataset.id); render(); showToast('Supprimé'); } });
   }
 
-  function lineHtml(l = {}) {
-    return `<tr class="line-row">
-      <td><select class="form-select line-cat" style="min-width:130px"><option value="">-- Type --</option>${types.map(t => `<option value="${t.id}" ${l.typeId === t.id ? 'selected' : ''}>${t.nom}</option>`).join('')}</select></td>
-      <td><select class="form-select line-prod" style="min-width:200px"><option value="">-- Produit --</option></select></td>
-      <td><input class="form-input line-prix" type="number" step="0.001" value="${l.prixUnitaire || 0}" style="width:110px"/></td>
-      <td><button type="button" class="btn btn-sm btn-danger remove-line">✗</button></td></tr>`;
-  }
+  async function openForm() {
+    // Get products that have validated BL Achat
+    const receivedIds = await getReceivedProductIds();
+    // Get products already used in vente documents
+    const venteUsedIds = await getVenteUsedProductIds();
+    const taxRate = settings.taxRate || 19;
 
-  async function openForm(bc = null) {
-    const isEdit = !!bc, taxRate = bc?.taxRate ?? settings.taxRate ?? 19;
-    const { sellableIds } = await getSellableProductIds();
-    const editOwnIds = new Set();
-    if (bc?.lignes) bc.lignes.forEach(l => { const pid = l.produitId || l.fromId; if (pid) editOwnIds.add(pid); });
+    // Available = received AND not yet used in any vente doc
+    const available = produits.filter(p => receivedIds.has(p.id) && !venteUsedIds.has(p.id)).sort((a, b) => (a.lotNumero || '').localeCompare(b.lotNumero || '') || (a.numero || 0) - (b.numero || 0));
 
-    showModal(isEdit ? 'Modifier BC' : 'Nouveau BC Vente', `<form id="bcv-form">
-      <div class="form-row"><div class="form-group"><label class="form-label">Client *</label><select class="form-select" name="clientId" required><option value="">--</option>${clients.map(c => `<option value="${c.id}" ${bc?.clientId === c.id ? 'selected' : ''}>${c.raisonSociale}</option>`).join('')}</select></div>
-        <div class="form-group"><label class="form-label">Date</label><input class="form-input" type="date" name="date" value="${bc?.date || todayISO()}"/></div></div>
+    showModal('Nouveau BC Vente', `<form id="bcv-form">
+      <div class="form-row"><div class="form-group"><label class="form-label">Client *</label><select class="form-select" name="clientId" required><option value="">--</option>${clients.map(c => `<option value="${c.id}">${c.raisonSociale}</option>`).join('')}</select></div>
+        <div class="form-group"><label class="form-label">Date</label><input class="form-input" type="date" name="date" value="${todayISO()}"/></div></div>
       <div class="form-group"><label class="form-label">TVA (%)</label><input class="form-input" type="number" name="taxRate" id="bcv-tax" value="${taxRate}" style="max-width:150px"/></div>
-      <h4 style="margin:16px 0 8px">Poteaux <small style="color:var(--text-muted)">(en stock et non vendus)</small></h4>
-      <div class="table-wrapper"><table class="data-table line-items-table"><thead><tr><th>Catégorie</th><th>Poteau (ID)</th><th>Prix HT</th><th></th></tr></thead><tbody id="bcv-lines">${(bc?.lignes || [{}]).map(l => lineHtml(l)).join('')}</tbody></table></div>
-      <button type="button" class="btn btn-secondary btn-sm" id="bcv-add-line">+ Ajouter Poteau</button>
-      <div class="form-group" style="margin-top:12px"><label class="form-label">Note</label><textarea class="form-input" name="note" rows="2">${bc?.note || ''}</textarea></div>
+      <h4 style="margin:16px 0 8px">Poteaux disponibles <small style="color:var(--text-muted)">(BL Achat validé, non utilisés en vente) — ${available.length} poteau(x)</small></h4>
+      <div class="table-wrapper" style="max-height:350px;overflow-y:auto"><table class="data-table"><thead><tr><th style="width:30px">✓</th><th>ID Poteau</th><th>Lot</th><th>Catégorie</th><th>Prix Vente</th></tr></thead><tbody id="bcv-lines">
+        ${available.length ? available.map(p => {
+          const lot = lots.find(l => l.id === p.lotId);
+          const catPrix = (lot?.prixParCategorie || []).find(cp => cp.categorieId === p.categorieId);
+          const prix = catPrix?.prixVente || p.prixVente || 0;
+          return `<tr data-prod="${p.id}" data-prix="${prix}">
+            <td><input type="checkbox" class="line-check"/></td>
+            <td><strong style="color:var(--accent)">${p.reference}</strong></td>
+            <td><span class="badge badge-warning">${p.lotNumero || '-'}</span></td>
+            <td>${p.categorieNom || '-'}</td>
+            <td>${formatCurrency(prix)}</td>
+          </tr>`;
+        }).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--text-muted)">Aucun poteau disponible (BL Achat validé requis)</td></tr>'}
+      </tbody></table></div>
+      <div class="form-group" style="margin-top:12px"><label class="form-label">Note</label><textarea class="form-input" name="note" rows="2"></textarea></div>
       <div class="doc-totals"><div class="doc-total-row"><span>Total HT:</span><span id="total-ht">0,000 DT</span></div><div class="doc-total-row"><span>TVA:</span><span id="total-tva">0,000 DT</span></div><div class="doc-total-row grand-total"><span>Total TTC:</span><span id="total-ttc">0,000 DT</span></div></div>
-    </form>`, `<button class="btn btn-secondary" onclick="document.getElementById('modal-overlay').classList.add('hidden')">Annuler</button><button class="btn btn-primary" id="save-bcv">${isEdit ? 'Modifier' : 'Créer'}</button>`);
+    </form>`, `<button class="btn btn-secondary" onclick="document.getElementById('modal-overlay').classList.add('hidden')">Annuler</button><button class="btn btn-primary" id="save-bcv">Créer</button>`);
     document.querySelector('.modal-container').style.maxWidth = '900px';
-    wireAll();
-    if (bc?.lignes) { setTimeout(() => { document.querySelectorAll('#bcv-lines .line-row').forEach((row, i) => { const l = bc.lignes[i]; if (l?.typeId) { row.querySelector('.line-cat').value = l.typeId; populateProducts(row, l.typeId, l.produitId || l.fromId); } }); recalcAll(); }, 100); }
-    document.getElementById('bcv-add-line').onclick = () => { document.getElementById('bcv-lines').insertAdjacentHTML('beforeend', lineHtml()); wireAll(); };
-    document.getElementById('bcv-tax').oninput = () => recalcAll();
-    document.getElementById('save-bcv').onclick = async () => {
-      const f = document.getElementById('bcv-form'), cid = f.querySelector('[name="clientId"]').value;
-      if (!cid) { showToast('Client requis', 'error'); return; }
-      const cl = clients.find(x => x.id === cid), dt = f.querySelector('[name="date"]').value, tax = parseFloat(f.querySelector('[name="taxRate"]').value) || 0, lines = collectLines();
-      if (!lines.length) { showToast('Ajoutez un poteau', 'error'); return; }
-      const totalHT = lines.reduce((s, l) => s + l.montant, 0), totalTVA = totalHT * tax / 100;
-      const data = { date: dt, clientId: cid, clientNom: cl?.raisonSociale || '', lignes: lines, taxRate: tax, totalHT, totalTVA, totalTTC: totalHT + totalTVA, statut: bc?.statut || 'En cours', note: f.querySelector('[name="note"]').value };
-      if (isEdit) { await update('bc_vente', bc.id, data); Object.assign(bc, data); } else { data.numero = await getNextNumber('bcVentePrefix'); const id = await add('bc_vente', data); bcs.unshift({ id, ...data }); }
-      hideModal(); render(); showToast(isEdit ? 'Modifié' : 'Créé');
-    };
 
-    function populateProducts(row, catId, selProdId) {
-      const catProds = produits.filter(p => p.typeId === catId && (sellableIds.has(p.id) || editOwnIds.has(p.id) || p.id === selProdId)).sort((a, b) => (a.numero || 0) - (b.numero || 0));
-      row.querySelector('.line-prod').innerHTML = `<option value="">-- Produit --</option>${catProds.map(p => `<option value="${p.id}" data-prix="0" ${selProdId === p.id ? 'selected' : ''}>${p.reference}</option>`).join('')}`;
-    }
-    function wireAll() {
-      document.querySelectorAll('#bcv-lines .line-row').forEach(row => {
-        row.querySelector('.line-cat').onchange = e => { populateProducts(row, e.target.value); recalcRow(row); };
-        row.querySelector('.line-prod').onchange = () => recalcRow(row);
-        row.querySelector('.line-prix').oninput = () => { row.querySelector('.line-prix').dataset.userEdited = 'true'; recalcRow(row); };
-        row.querySelector('.remove-line').onclick = () => { if (document.getElementById('bcv-lines').children.length > 1) row.remove(); recalcAll(); };
+    document.querySelectorAll('#bcv-lines .line-check').forEach(cb => cb.onchange = () => recalcTotals());
+    document.getElementById('bcv-tax').oninput = () => recalcTotals();
+
+    function recalcTotals() {
+      let ht = 0;
+      document.querySelectorAll('#bcv-lines tr[data-prod]').forEach(r => {
+        if (r.querySelector('.line-check')?.checked) ht += parseFloat(r.dataset.prix) || 0;
       });
-    }
-    function recalcRow(row) {
-      const prodOpt = row.querySelector('.line-prod').selectedOptions[0];
-      const prixInput = row.querySelector('.line-prix');
-      const productPrix = parseFloat(prodOpt?.dataset?.prix) || 0;
-      if (prodOpt?.value && productPrix > 0 && !prixInput.dataset.userEdited) prixInput.value = productPrix;
-      recalcAll();
-    }
-    function recalcAll() {
-      let ht = 0; document.querySelectorAll('#bcv-lines .line-row').forEach(r => { ht += parseFloat(r.querySelector('.line-prix').value) || 0; });
       const t = parseFloat(document.getElementById('bcv-tax')?.value) || 0;
-      const h = document.getElementById('total-ht'), v = document.getElementById('total-tva'), c = document.getElementById('total-ttc');
-      if (h) h.textContent = formatCurrency(ht); if (v) v.textContent = formatCurrency(ht * t / 100); if (c) c.textContent = formatCurrency(ht + ht * t / 100);
+      document.getElementById('total-ht').textContent = formatCurrency(ht);
+      document.getElementById('total-tva').textContent = formatCurrency(ht * t / 100);
+      document.getElementById('total-ttc').textContent = formatCurrency(ht + ht * t / 100);
     }
-    function collectLines() {
-      const lines = [], seen = new Set(); document.querySelectorAll('#bcv-lines .line-row').forEach(row => {
-        const catSel = row.querySelector('.line-cat'), pSel = row.querySelector('.line-prod');
-        const prix = parseFloat(row.querySelector('.line-prix').value) || 0;
-        if (pSel.value) {
-          if (seen.has(pSel.value)) { showToast('Poteau en double!', 'error'); return; }
-          seen.add(pSel.value);
-          const tp = types.find(t => t.id === catSel.value), prod = produits.find(p => p.id === pSel.value);
-          lines.push({ typeId: catSel.value, typeNom: tp?.nom || '', produitId: pSel.value, produitRef: prod?.reference || '', designation: prod?.reference || '', quantite: 1, prixUnitaire: prix, montant: prix });
-        }
-      }); return lines;
-    }
+
+    document.getElementById('save-bcv').onclick = async () => {
+      const f = document.getElementById('bcv-form');
+      const cid = f.querySelector('[name="clientId"]').value;
+      if (!cid) { showToast('Client requis', 'error'); return; }
+      const cl = clients.find(x => x.id === cid);
+      const dt = f.querySelector('[name="date"]').value;
+      const tax = parseFloat(f.querySelector('[name="taxRate"]').value) || 0;
+      const note = f.querySelector('[name="note"]').value;
+
+      const lines = [];
+      document.querySelectorAll('#bcv-lines tr[data-prod]').forEach(r => {
+        if (!r.querySelector('.line-check')?.checked) return;
+        const prodId = r.dataset.prod;
+        const prix = parseFloat(r.dataset.prix) || 0;
+        const prod = produits.find(p => p.id === prodId);
+        lines.push({
+          categorieId: prod?.categorieId || '', categorieNom: prod?.categorieNom || '',
+          produitId: prodId, produitRef: prod?.reference || '', designation: prod?.reference || '',
+          lotId: prod?.lotId || '', lotNumero: prod?.lotNumero || '',
+          quantite: 1, prixUnitaire: prix, montant: prix
+        });
+      });
+      if (!lines.length) { showToast('Sélectionnez au moins un poteau', 'error'); return; }
+
+      const totalHT = lines.reduce((s, l) => s + l.montant, 0);
+      const totalTVA = totalHT * tax / 100;
+      const numero = await getNextNumber('bcVentePrefix');
+      const data = { numero, date: dt, clientId: cid, clientNom: cl?.raisonSociale || '', lignes: lines, taxRate: tax, totalHT, totalTVA, totalTTC: totalHT + totalTVA, statut: 'En cours', note };
+      const id = await add('bc_vente', data);
+      bcs.unshift({ id, ...data });
+      hideModal(); render(); showToast(`BC Vente ${numero} créé (${lines.length} poteaux)`);
+    };
   }
 
   function viewDoc(b) {
