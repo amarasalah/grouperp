@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Import PV - BAP 9/300</title>
+  <style>
+    body { font-family: 'Inter', sans-serif; background: #f1f5f9; padding: 30px; }
+    .card { background: #fff; border-radius: 12px; padding: 24px; max-width: 800px; margin: 0 auto; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+    h1 { color: #4f46e5; margin-bottom: 8px; }
+    .info { color: #64748b; margin-bottom: 16px; }
+    .stats { display: flex; gap: 16px; margin: 16px 0; }
+    .stat { background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px 16px; border-radius: 8px; flex: 1; text-align: center; }
+    .stat .num { font-size: 1.5rem; font-weight: 700; color: #4f46e5; }
+    .stat .label { font-size: 0.82rem; color: #94a3b8; }
+    #log { background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 8px; max-height: 400px; overflow-y: auto; font-size: 0.82rem; font-family: monospace; white-space: pre-wrap; }
+    button { background: #4f46e5; color: #fff; border: none; padding: 12px 24px; border-radius: 8px; font-size: 0.95rem; font-weight: 600; cursor: pointer; margin-top: 12px; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button:hover:not(:disabled) { background: #4338ca; }
+    .warn { color: #f59e0b; }
+    .ok { color: #22c55e; }
+    .err { color: #ef4444; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>Import PV DE RECEPTION BAP 9/300</h1>
+  <p class="info">Lot <strong>4D0305495</strong> — Catégorie <strong>BAP 9/300</strong> — 440 supports</p>
+  
+  <div class="stats">
+    <div class="stat"><div class="num" id="total-count">440</div><div class="label">Total Supports</div></div>
+    <div class="stat"><div class="num" id="existing-count">-</div><div class="label">Déjà Existants</div></div>
+    <div class="stat"><div class="num" id="new-count">-</div><div class="label">À Importer</div></div>
+    <div class="stat"><div class="num" id="done-count">0</div><div class="label">Importés</div></div>
+  </div>
+  
+  <button id="check-btn" onclick="checkData()">1. Vérifier les données</button>
+  <button id="import-btn" onclick="startImport()" disabled>2. Lancer l'import</button>
+  
+  <div id="log" style="margin-top:16px"></div>
+</div>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.9.0/firebase-app.js';
+import { getFirestore, collection, getDocs, addDoc, query, where, serverTimestamp } from 'https://www.gstatic.com/firebasejs/11.9.0/firebase-firestore.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyA0YXwHpqTHQdAjqC-e_rwJgW9M8YsjVy8",
+  authDomain: "groupement-project.firebaseapp.com",
+  projectId: "groupement-project",
+  storageBucket: "groupement-project.firebasestorage.app",
+  messagingSenderId: "746932908534",
+  appId: "1:746932908534:web:d324d8e87559cc6bbe97d7"
+};
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// === ALL 440 PRODUCT NUMBERS FROM THE PV ===
+const PRODUCT_NUMBERS = [
+  // Page 1 - Row 1-10
+  61, 118, 199, 263, 325, 377, 434, 664, 756, 1787,
+  62, 119, 201, 264, 326, 378, 435, 676, 757, 1788,
+  63, 131, 202, 265, 327, 379, 436, 677, 758, 1789,
+  64, 132, 203, 266, 328, 380, 437, 678, 759, 1790,
+  71, 133, 204, 267, 329, 381, 439, 679, 760, 1791,
+  72, 134, 205, 268, 330, 382, 441, 696, 761, 1792,
+  73, 136, 206, 269, 331, 383, 442, 697, 762, 1793,
+  74, 138, 207, 270, 332, 384, 443, 698, 763, 1794,
+  76, 140, 208, 271, 333, 385, 444, 699, 764, 1795,
+  77, 141, 209, 272, 334, 386, 445, 700, 765, 1796,
+  // Page 1 - Row 11-20
+  78, 142, 210, 273, 335, 387, 458, 711, 766, 1797,
+  79, 143, 211, 274, 336, 388, 466, 712, 767, 1798,
+  80, 144, 212, 275, 337, 389, 469, 713, 768, 1799,
+  81, 145, 213, 276, 338, 390, 478, 714, 769, 1800,
+  82, 147, 214, 277, 339, 410, 479, 715, 770, 1801,
+  83, 148, 215, 278, 340, 411, 562, 716, 774, 1804,
+  84, 149, 216, 279, 356, 412, 563, 717, 793, 1831,
+  85, 150, 217, 280, 357, 413, 606, 718, 1581, 1832,
+  86, 151, 218, 296, 358, 414, 607, 719, 1702, 1833,
+  87, 152, 219, 297, 359, 421, 608, 720, 1703, 1834,
+  // Page 1 - Row 21-30
+  88, 153, 220, 298, 366, 422, 609, 721, 1765, 1846,
+  89, 154, 236, 299, 367, 424, 610, 722, 1766, 1847,
+  90, 155, 237, 316, 368, 425, 613, 723, 1767, 1848,
+  91, 176, 238, 317, 369, 427, 614, 724, 1768, 1849,
+  92, 177, 256, 318, 371, 428, 615, 725, 1781, 1852,
+  93, 178, 257, 319, 372, 429, 617, 739, 1782, 1853,
+  94, 179, 258, 321, 373, 430, 618, 751, 1783, 1854,
+  95, 196, 259, 322, 374, 431, 661, 752, 1784, 1855,
+  116, 197, 261, 323, 375, 432, 662, 753, 1785, 1856,
+  117, 198, 262, 324, 376, 433, 663, 754, 1786, 1857,
+  // Page 2 - Row 1-10
+  1858, 2058, 2138, 2203, 2256,
+  1859, 2059, 2139, 2204, 2257,
+  1860, 2072, 2140, 2205, 2258,
+  1861, 2073, 2142, 2206, 2259,
+  1862, 2074, 2143, 2207, 2260,
+  1863, 2076, 2144, 2208, 2261,
+  1864, 2077, 2145, 2209, 2263,
+  1865, 2078, 2147, 2210, 2264,
+  1866, 2079, 2148, 2211, 2265,
+  1867, 2080, 2149, 2212, 2289,
+  // Page 2 - Row 11-20
+  1868, 2081, 2150, 2214, 2303,
+  1869, 2082, 2152, 2215, 2304,
+  1870, 2083, 2153, 2236, 2305,
+  1900, 2084, 2154, 2237, 2307,
+  1901, 2085, 2155, 2238, 2308,
+  1902, 2086, 2176, 2239, 2309,
+  1903, 2087, 2177, 2241, 2310,
+  1910, 2088, 2178, 2242, 2313,
+  1911, 2089, 2179, 2243, 2314,
+  1913, 2091, 2191, 2244, 2315,
+  // Page 2 - Row 21-30 (4 columns)
+  1914, 2092, 2192, 2246,
+  1916, 2094, 2194, 2247,
+  1917, 2095, 2195, 2248,
+  1918, 2098, 2196, 2249,
+  1927, 2116, 2197, 2250,
+  1930, 2117, 2198, 2251,
+  1965, 2131, 2199, 2252,
+  1975, 2132, 2200, 2253,
+  2056, 2136, 2201, 2254,
+  2057, 2137, 2202, 2255,
+];
+
+const LOT_NUMERO = "4D0305495";
+const CAT_PREFIX = "BAP 9/300";
+
+let lotData = null;
+let catData = null;
+let existingRefs = new Set();
+let toImport = [];
+
+function log(msg, cls = '') {
+  const el = document.getElementById('log');
+  const span = cls ? `<span class="${cls}">${msg}</span>` : msg;
+  el.innerHTML += span + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+
+window.checkData = async function() {
+  const btn = document.getElementById('check-btn');
+  btn.disabled = true;
+  btn.textContent = 'Vérification...';
+  document.getElementById('log').innerHTML = '';
+  
+  try {
+    // 1. Find the lot
+    log('🔍 Recherche du lot ' + LOT_NUMERO + '...');
+    const lotsSnap = await getDocs(collection(db, 'lots'));
+    const lots = lotsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    lotData = lots.find(l => l.numero && l.numero.includes('4D0305495'));
+    if (!lotData) {
+      // Try partial match
+      lotData = lots.find(l => l.numero && (l.numero.includes('4D03') || l.numero.includes('0305495')));
+    }
+    if (!lotData) {
+      log('❌ Lot non trouvé! Lots existants:', 'err');
+      lots.forEach(l => log('   - ' + l.numero));
+      return;
+    }
+    log('✅ Lot trouvé: ' + lotData.numero + ' (ID: ' + lotData.id + ')', 'ok');
+
+    // 2. Find the category
+    log('🔍 Recherche de la catégorie POTEAU ELECTRIQUE EN BETON PRECONTRAINT 300...');
+    const catsSnap = await getDocs(collection(db, 'categories'));
+    const cats = catsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    catData = cats.find(c => c.nom && c.nom.toUpperCase().includes('PRECONTRAINT') && c.nom.includes('300'));
+    if (!catData) {
+      catData = cats.find(c => c.nom && c.nom.toUpperCase().includes('300'));
+    }
+    if (!catData) {
+      catData = cats.find(c => c.nom && (c.nom.toUpperCase().includes('BAP') || c.nom.toUpperCase().includes('POTEAU')));
+    }
+    if (!catData) {
+      log('❌ Catégorie non trouvée! Catégories existantes:', 'err');
+      cats.forEach(c => log('   - ' + c.nom));
+      return;
+    }
+    log('✅ Catégorie trouvée: ' + catData.nom + ' (ID: ' + catData.id + ')', 'ok');
+
+    // 3. Get prices from lot
+    const catPrix = (lotData.prixParCategorie || []).find(p => p.categorieId === catData.id);
+    if (catPrix) {
+      log('💰 Prix Achat: ' + (catPrix.prixAchat || 0) + ' DT | Prix Vente: ' + (catPrix.prixVente || 0) + ' DT', 'ok');
+    } else {
+      log('⚠️ Pas de prix définis pour cette catégorie dans ce lot', 'warn');
+    }
+
+    // 4. Check existing products
+    log('🔍 Vérification des produits existants...');
+    const prodsSnap = await getDocs(collection(db, 'produits'));
+    const prods = prodsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    existingRefs = new Set(prods.map(p => p.reference));
+    
+    // 5. Determine what to import
+    toImport = PRODUCT_NUMBERS.filter(n => !existingRefs.has(String(n)));
+    const existing = PRODUCT_NUMBERS.length - toImport.length;
+    
+    document.getElementById('existing-count').textContent = existing;
+    document.getElementById('new-count').textContent = toImport.length;
+    
+    if (existing > 0) {
+      log('⚠️ ' + existing + ' produits existent déjà et seront ignorés', 'warn');
+    }
+    log('📦 ' + toImport.length + ' nouveaux produits à importer', 'ok');
+    
+    if (toImport.length > 0) {
+      document.getElementById('import-btn').disabled = false;
+    }
+    
+    log('\n✅ Vérification terminée. Cliquez sur "Lancer l\'import" pour continuer.');
+    
+  } catch (err) {
+    log('❌ Erreur: ' + err.message, 'err');
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '1. Vérifier les données';
+  }
+};
+
+window.startImport = async function() {
+  if (!lotData || !catData || toImport.length === 0) return;
+  
+  const btn = document.getElementById('import-btn');
+  btn.disabled = true;
+  btn.textContent = 'Import en cours...';
+  
+  const catPrix = (lotData.prixParCategorie || []).find(p => p.categorieId === catData.id);
+  const prixAchat = catPrix?.prixAchat || 0;
+  const prixVente = catPrix?.prixVente || 0;
+  
+  let done = 0;
+  let errors = 0;
+  const BATCH_SIZE = 10;
+  
+  log('\n🚀 Début de l\'import de ' + toImport.length + ' produits...');
+  
+  for (let i = 0; i < toImport.length; i += BATCH_SIZE) {
+    const batch = toImport.slice(i, i + BATCH_SIZE);
+    const promises = batch.map(async (num) => {
+      const ref = String(num);
+      try {
+        await addDoc(collection(db, 'produits'), {
+          reference: ref,
+          designation: catData.nom + ' N\u00B0' + ref,
+          categorieId: catData.id,
+          categorieNom: catData.nom,
+          fournisseurId: '',
+          fournisseurNom: '',
+          lotId: lotData.id,
+          lotNumero: lotData.numero,
+          prixAchat,
+          prixVente,
+          unite: 'Unité',
+          stock: 0,
+          numero: num,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        done++;
+        return true;
+      } catch (err) {
+        errors++;
+        log('  ❌ Erreur pour N°' + ref + ': ' + err.message, 'err');
+        return false;
+      }
+    });
+    
+    await Promise.all(promises);
+    document.getElementById('done-count').textContent = done;
+    
+    if ((i + BATCH_SIZE) % 50 === 0 || i + BATCH_SIZE >= toImport.length) {
+      log('  📊 Progression: ' + done + '/' + toImport.length + (errors > 0 ? ' (' + errors + ' erreurs)' : ''));
+    }
+  }
+  
+  log('\n' + '='.repeat(50));
+  log('✅ IMPORT TERMINÉ', 'ok');
+  log('   Importés: ' + done, 'ok');
+  if (errors > 0) log('   Erreurs: ' + errors, 'err');
+  log('   Lot: ' + lotData.numero);
+  log('   Catégorie: ' + catData.nom);
+  
+  btn.textContent = '✅ Import terminé!';
+};
+</script>
+</body>
+</html>
