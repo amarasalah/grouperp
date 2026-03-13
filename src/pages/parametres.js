@@ -53,9 +53,43 @@ export async function renderParametres() {
             <input class="form-input" name="companyAI" value="${settings.companyAI || ''}" />
           </div>
         </div>
-        <div class="form-group">
-          <label class="form-label">NIS</label>
-          <input class="form-input" name="companyNIS" value="${settings.companyNIS || ''}" style="max-width:49%;" />
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">NIS</label>
+            <input class="form-input" name="companyNIS" value="${settings.companyNIS || ''}" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Code TVA</label>
+            <input class="form-input" name="companyTVA" value="${settings.companyTVA || ''}" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Activité / Groupement</label>
+            <input class="form-input" name="companyActivity" value="${settings.companyActivity || ''}" placeholder="ex: GROUPEMENT DE PRESTATAIRES" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Site Web</label>
+            <input class="form-input" name="companyWebsite" value="${settings.companyWebsite || ''}" placeholder="ex: www.sireprefa.com.tn" />
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:20px;">
+        <div class="card-header">
+          <h3 class="card-title">🏦 Informations Bancaires</h3>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Banque</label>
+            <input class="form-input" name="bankInfo" value="${settings.bankInfo || ''}" placeholder="ex: Banque BIAT-Banque Internationale Arabe de Tunisie" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">IBAN</label>
+            <input class="form-input" name="bankIBAN" value="${settings.bankIBAN || ''}" placeholder="ex: TN59 0870 5000 4110 5166 7975" />
+          </div>
         </div>
       </div>
 

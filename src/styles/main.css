@@ -1069,8 +1069,26 @@ textarea {
 /* ===== PRINT STYLES ===== */
 @media print {
   body {
-    background: #fff;
+    background: #fff !important;
     color: #000;
+  }
+
+  /* When printing from modal — hide everything except the BL doc */
+  body.printing-bl * {
+    visibility: hidden;
+  }
+  body.printing-bl .bl-doc,
+  body.printing-bl .bl-doc * {
+    visibility: visible;
+  }
+  body.printing-bl .bl-doc {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    padding: 20px;
+    background: white;
+    z-index: 9999;
   }
 
   .sidebar,
@@ -1098,8 +1116,10 @@ textarea {
   }
 
   .data-table th {
-    background: #f0f0f0;
-    color: #333;
+    background: #f0f0f0 !important;
+    color: #333 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 
   .data-table td {
@@ -1112,6 +1132,14 @@ textarea {
 
   .print-header {
     display: block !important;
+  }
+
+  /* BL document print styles */
+  .bl-doc .hdr-title,
+  .bl-doc .net-row td,
+  .bl-doc .client-box .label {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 }
 
